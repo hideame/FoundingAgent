@@ -1,0 +1,36 @@
+<div id="plan-container" class="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+  <!-- Header -->
+  <div class="bg-gray-50 px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+    <div>
+      <h2 class="text-lg font-bold text-gray-900">創業計画書（ドラフト）</h2>
+      <p class="text-sm text-gray-500">AIが作成した原案です。内容を確認し、必要に応じて修正してください。</p>
+    </div>
+    <div class="flex gap-2">
+      <a href="/plan/download_excel" class="px-4 py-2 bg-green-600 text-white rounded text-sm hover:bg-green-700 font-medium flex items-center gap-2 shadow-sm decoration-0">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 01-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3h-2.25" />
+        </svg>
+        Excel形式でDL
+      </a>
+      <button hx-get="/plan/edit"
+              hx-target="#plan-container"
+              hx-swap="outerHTML"
+              class="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 font-medium shadow-sm flex items-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+        </svg>
+        編集画面へ
+      </button>
+    </div>
+  </div>
+
+  <!-- Content -->
+  <div class="flex-1 overflow-y-auto p-8 font-serif leading-relaxed text-gray-800">
+    <div class="max-w-3xl mx-auto prose prose-blue">
+      {{ plan_text | replace('\n', '<br>') | safe }}
+    </div>
+  </div>
+</div>
+
+<!-- OOB Stepper Update -->
+{{ stepper_oob | safe }}

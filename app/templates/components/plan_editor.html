@@ -1,0 +1,30 @@
+<div id="plan-container" class="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
+  <!-- Header -->
+  <div class="bg-blue-50 px-6 py-4 border-b border-blue-200 flex justify-between items-center">
+    <div>
+      <h2 class="text-lg font-bold text-blue-900">創業計画書（編集モード）</h2>
+      <p class="text-sm text-blue-700">内容を自由に修正してください。</p>
+    </div>
+    <div class="flex gap-2">
+      <button hx-post="/plan/save"
+              hx-include="#plan-editor-form"
+              hx-target="#plan-container"
+              hx-swap="outerHTML"
+              class="px-4 py-2 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 shadow-sm font-bold flex items-center gap-2">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-4 h-4">
+          <path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5" />
+        </svg>
+        保存して完了
+      </button>
+    </div>
+  </div>
+
+  <!-- Editor -->
+  <div class="flex-1 p-0 overflow-hidden">
+    <form id="plan-editor-form" class="h-full flex flex-col">
+        <textarea name="plan_text"
+                  class="flex-1 w-full h-full p-8 font-serif leading-relaxed text-gray-800 focus:outline-none resize-none border-none focus:ring-0 text-base"
+                  spellcheck="false">{{ plan_text }}</textarea>
+    </form>
+  </div>
+</div>

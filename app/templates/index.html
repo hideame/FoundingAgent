@@ -1,43 +1,158 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Founder's Pilot - 起業伴走エージェント</title>
-    <!-- htmx -->
-    <script src="https://unpkg.com/htmx.org@1.9.10" integrity="sha384-D1Kt99CQMDuVetoL1lrYwg5t+9QdHe7NLX/SoJYkXDFfX37iInKRy5xLSi8nO7UC" crossorigin="anonymous"></script>
-    <!-- Tailwind CSS -->
-    <script src="https://cdn.tailwindcss.com"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Founder's Pilot - 創業計画書作成</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- htmx -->
+  <script src="https://unpkg.com/htmx.org@1.9.10"></script>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;500;700&display=swap" rel="stylesheet">
+  <style>
+    body { font-family: 'Noto Sans JP', sans-serif; }
+    .htmx-indicator { display: none; }
+    .htmx-request .htmx-indicator { display: inline; }
+  </style>
 </head>
-<body class="bg-gray-50 text-gray-800 font-sans">
-    <div class="container mx-auto p-4 max-w-4xl">
-        <header class="mb-8 py-4 border-b border-gray-200">
-            <h1 class="text-3xl font-bold text-blue-700">Founder's Pilot</h1>
-            <p class="text-gray-600">あなたの起業を成功へ導くAIパートナー</p>
-        </header>
+<body class="bg-gray-50 text-gray-800 h-screen flex flex-col">
 
-        <main id="main-content">
-            {% block content %}
-            <!-- Flowchart removed and moved to document/loan_flow.md -->
-
-            <!-- Default Content -->
-            <div class="bg-white p-6 rounded-lg shadow-md">
-                <h2 class="text-xl font-semibold mb-4">創業計画書作成を始めましょう</h2>
-                <p class="mb-6">日本政策金融公庫の融資に必要な情報を、対話形式で整理します。</p>
-                <button
-                    hx-get="/chat/start"
-                    hx-target="#main-content"
-                    hx-swap="innerHTML"
-                    class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded focus:outline-none focus:shadow-outline transition duration-150 ease-in-out">
-                    作成を開始する
-                </button>
-            </div>
-            {% endblock %}
-        </main>
-
-        <footer class="mt-12 text-center text-gray-500 text-sm">
-            &copy; 2026 Founder's Pilot. Powered by Gemini & Google Cloud.
-        </footer>
+  <!-- 1. ヘッダー -->
+  <header class="bg-white border-b border-gray-200">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center">
+        <span class="text-xl font-bold text-blue-600">Founder's Pilot</span>
+        <span class="ml-4 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">Prototyping</span>
+      </div>
+      <div class="flex items-center gap-6">
+        <button hx-post="/reset"
+                hx-confirm="これまでのすべてのデータ（チャット履歴・タスク進捗）を削除して、最初からやり直しますか？"
+                class="text-sm text-red-500 hover:text-red-700 underline font-medium cursor-pointer">
+            最初からやり直す
+        </button>
+      </div>
     </div>
+  </header>
+
+  <!-- 2. ステッパー (大項目フロー) -->
+  <div class="bg-white border-b border-gray-200 py-6">
+    <div class="max-w-5xl mx-auto px-4">
+      {% include "components/stepper.html" %}
+    </div>
+  </div>
+
+  <!-- 3. メインエリア -->
+  <main class="flex-1 flex overflow-hidden">
+    <div class="max-w-7xl w-full mx-auto flex">
+
+      <!-- 左側: タスクリスト -->
+      <div class="w-1/3 border-r border-gray-200 bg-white overflow-y-auto p-6 flex flex-col">
+        <h2 class="text-lg font-bold text-gray-900 mb-4">創業計画書・作成項目</h2>
+        <div class="space-y-4 flex-1">
+          {% for task in tasks %}
+          <div hx-get="/chat/start?task_id={{ task.id }}"
+             hx-target="#workspace-area"
+             hx-swap="innerHTML"
+             class="group relative flex items-start p-4 border border-gray-200 rounded-lg hover:border-blue-400 cursor-pointer transition-colors shadow-sm bg-white hover:bg-blue-50">
+            <div class="flex h-6 items-center">
+              <input id="task-{{ task.id }}" name="task-{{ task.id }}" type="checkbox" class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-600" {{ 'checked' if task.status == 'done' else '' }}>
+            </div>
+            <div class="ml-3 text-sm leading-6">
+              <label for="task-{{ task.id }}" class="font-medium text-gray-900 cursor-pointer pointer-events-none">{{ task.title }}</label>
+              <p class="text-gray-500 text-xs mt-1 pointer-events-none">{{ task.desc }}</p>
+            </div>
+          </div>
+          {% endfor %}
+        </div>
+        <!-- 完了ボタン -->
+        <div class="mt-6 pt-6 border-t border-gray-200">
+          <button hx-post="/plan/generate"
+              hx-target="#workspace-area"
+              hx-swap="innerHTML"
+              class="w-full bg-indigo-600 text-white rounded-lg px-4 py-3 hover:bg-indigo-700 transition-colors font-bold shadow-md flex items-center justify-center gap-2">
+            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-5 h-5">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
+            </svg>
+            創業計画書案を作成する
+          </button>
+          <p class="text-xs text-gray-400 mt-2 text-center">全ての項目が埋まっていなくても作成できます</p>
+        </div>
+      </div>
+
+      <!-- 右側: エージェントワークスペース（チャットエリア） -->
+      <div class="w-2/3 bg-gray-50 flex flex-col relative">
+        <div id="workspace-area" class="flex-1 flex flex-col h-full">
+
+          {% if initial_chat_history %}
+            <!-- 以前のセッションがある場合はチャット画面を復元 -->
+            <div class="flex flex-col h-full border rounded-lg bg-gray-50 m-4 shadow-sm">
+              <!-- Chat History -->
+              <div id="chat-history" class="flex-1 overflow-y-auto p-4 space-y-4">
+                {{ initial_chat_history | safe }}
+              </div>
+
+              <!-- Input Area -->
+              <div class="border-t bg-white p-4 rounded-b-lg">
+                <form hx-post="/chat/message"
+                      hx-target="#chat-history"
+                      hx-swap="beforeend"
+                      hx-on::after-request="this.reset()"
+                      class="flex gap-2">
+                  <textarea name="user_message"
+                            rows="4"
+                            class="flex-1 border rounded-lg px-4 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none"
+                            placeholder="メッセージを入力してください..."
+                            required></textarea>
+                  <button type="submit"
+                          class="bg-blue-600 text-white rounded-lg px-6 py-2 hover:bg-blue-700 transition-colors font-semibold h-fit self-end">
+                    送信
+                  </button>
+                </form>
+                <div class="text-xs text-center text-gray-400 mt-2">
+                  AIも間違いを犯す可能性があります。重要な情報は必ず確認してください。
+                </div>
+              </div>
+            </div>
+
+            <!-- Auto-scroll to bottom script -->
+            <script>
+              (function() {
+                  const chatHistory = document.getElementById('chat-history');
+                  if(chatHistory) {
+                    chatHistory.scrollTop = chatHistory.scrollHeight;
+                    const observer = new MutationObserver(() => {
+                        chatHistory.scrollTop = chatHistory.scrollHeight;
+                    });
+                    observer.observe(chatHistory, { childList: true });
+                  }
+              })();
+            </script>
+
+          {% else %}
+            <!-- 初期状態: 案内メッセージ -->
+            <div class="flex-1 flex flex-col items-center justify-center p-10 text-center">
+              <div class="bg-white p-8 rounded-xl shadow-sm max-w-md">
+                <div class="h-12 w-12 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center mx-auto mb-4">
+                  <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.5" stroke="currentColor" class="w-6 h-6">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8.625 12a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H8.25m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0H12m4.125 0a.375.375 0 11-.75 0 .375.375 0 01.75 0zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 01-2.555-.337A5.972 5.972 0 015.41 20.97a5.969 5.969 0 01-.474-.065 4.48 4.48 0 00.978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.159 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25z" />
+                  </svg>
+                </div>
+                <h3 class="text-lg font-bold text-gray-900 mb-2">エージェントと作成を始める</h3>
+                <p class="text-gray-500 text-sm mb-6">左のリストから作成したい項目を選ぶか、<br>エージェントにお任せしてガイドしてもらいましょう。</p>
+
+                <!-- チャット開始ボタン -->
+                <button hx-get="/chat/start" hx-target="#workspace-area" hx-swap="innerHTML"
+                    class="inline-flex items-center px-4 py-2 border border-transparent shadow-sm text-sm font-medium rounded-md text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 cursor-pointer">
+                  エージェントを呼び出す
+                </button>
+              </div>
+            </div>
+          {% endif %}
+        </div>
+      </div>
+
+    </div>
+  </main>
 </body>
 </html>

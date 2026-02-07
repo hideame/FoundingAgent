@@ -1,0 +1,23 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Generate Documentation (pdoc)",
+            "type": "shell",
+            "command": "${command:python.interpreterPath} -m pdoc app/ --output-directory docs",
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": false
+            },
+            "detail": "Generate static HTML documentation in docs/ directory"
+        },
+        {
+            "label": "Preview Documentation (pdoc)",
+            "type": "shell",
+            "command": "${command:python.interpreterPath} -m pdoc app/",
+            "problemMatcher": [],
+            "detail": "Start a local server to preview documentation"
+        }
+    ]
+}

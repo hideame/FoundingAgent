@@ -1,0 +1,28 @@
+<nav aria-label="Progress" id="stepper-nav">
+  <ol role="list" class="flex items-center">
+    {% for step in steps %}
+      <li class="relative pr-8 sm:pr-20 {{ 'flex-1' if not loop.last else '' }}">
+        <div class="absolute inset-0 flex items-center" aria-hidden="true">
+          {% if not loop.last %}
+          <div class="h-0.5 w-full {{ 'bg-blue-600' if step.status == 'completed' else 'bg-gray-200' }}"></div>
+          {% endif %}
+        </div>
+        <div class="relative flex h-8 w-8 items-center justify-center rounded-full {{ 'bg-blue-600 hover:bg-blue-700' if step.status == 'completed' or step.status == 'current' else 'bg-white border-2 border-gray-300' }}">
+          {% if step.status == 'completed' %}
+            <!-- Check Icon -->
+            <svg class="h-5 w-5 text-white" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+              <path fill-rule="evenodd" d="M16.704 4.153a.75.75 0 01.143 1.052l-8 10.5a.75.75 0 01-1.127.075l-4.5-4.5a.75.75 0 011.06-1.06l3.894 3.893 7.48-9.817a.75.75 0 011.05-.143z" clip-rule="evenodd" />
+            </svg>
+          {% elif step.status == 'current' %}
+            <span class="h-2.5 w-2.5 rounded-full bg-white" aria-hidden="true"></span>
+          {% else %}
+            <span class="text-gray-500 text-xs">{{ step.id }}</span>
+          {% endif %}
+        </div>
+        <div class="absolute top-10 w-32 -left-12 text-center text-xs font-medium {{ 'text-blue-600' if step.status == 'current' else 'text-gray-500' }}">
+          {{ step.title }}
+        </div>
+      </li>
+    {% endfor %}
+  </ol>
+</nav>
