@@ -508,25 +508,33 @@ async def download_plan_excel(session_id: str | None = Cookie(default=None)):
         ("motivation", "創業の動機"),
         ("background", "経営者の略歴等"),
         ("service", "取扱商品・サービス"),
-        ("partners", "取引先・取引関係等"),
         ("employees", "従業員"),
+        ("partners", "取引先・取引関係等"),
+        ("related_companies", "関連企業"),
         ("loans", "お借入の状況"),
         ("funds", "必要な資金と調達方法"),
         ("outlook", "事業の見通し"),
     ]
 
     def build_section_pattern(current_label, next_labels):
+        """
+        見出しとその次の見出しまでの内容を抽出する正規表現パターンを生成
+        マークダウン形式（## 1. 創業の動機）に対応
+        """
         next_part = "|".join(re.escape(label) for label in next_labels)
-        return rf"(?:^|\n)\s*(?:\d+[\.|\s]*)?{re.escape(current_label)}\s*(?:\n|:|：)\s*(.*?)(?=\n\s*(?:\d+[\.|\s]*)?(?:{next_part})\s*(?:\n|:|：)|\Z)"
+        # マークダウン(##)、番号付き(1. または 1)、コロン(:)などに対応
+        # 見出し部分: ^\s*#{0,6}\s*\d*\.?\s*{label}
+        # 次の見出しまで、または文末まで抽出
+        if next_labels:
+            return rf"^\s*#{{{0, 6}}}\s*\d*\.?\s*{re.escape(current_label)}\s*(?:\n|:|：)\s*(.*?)(?=^\s*#{{{0, 6}}}\s*\d*\.?\s*(?:{next_part}))"
+        else:
+            # 最後のセクションは文末まで
+            return rf"^\s*#{{{0, 6}}}\s*\d*\.?\s*{re.escape(current_label)}\s*(?:\n|:|：)\s*(.*?)$"
 
     sections = {}
     for idx, (key, label) in enumerate(heading_order):
         next_labels = [next_label for _, next_label in heading_order[idx + 1 :]]
-        pattern = (
-            build_section_pattern(label, next_labels)
-            if next_labels
-            else build_section_pattern(label, [])
-        )
+        pattern = build_section_pattern(label, next_labels)
         sections[key] = pattern
 
     def normalize_section_text(content: str) -> str:
@@ -536,7 +544,8 @@ async def download_plan_excel(session_id: str | None = Cookie(default=None)):
         return content.strip()
 
     def extract_section(pattern, text):
-        match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+        """正規表現パターンでテキストからセクションを抽出"""
+        match = re.search(pattern, text, re.DOTALL | re.MULTILINE)
         if match:
             return normalize_section_text(match.group(1))
         return ""
@@ -549,8 +558,9 @@ async def download_plan_excel(session_id: str | None = Cookie(default=None)):
         "創業の動機": "motivation",
         "経営者の略歴等": "background",
         "取扱商品・サービス": "service",
-        "取引先・取引関係等": "partners",
         "従業員": "employees",
+        "取引先・取引関係等": "partners",
+        "関連企業": "related_companies",
         "お借入の状況": "loans",
         "必要な資金と調達方法": "funds",
         "事業の見通し": "outlook",
@@ -590,13 +600,18 @@ async def download_plan_excel(session_id: str | None = Cookie(default=None)):
     for key, cell in label_cells.items():
         mapping[key] = choose_target_cell(cell)
 
+    print("[DEBUG] Cell mapping detected:")
+    for key, addr in mapping.items():
+        print(f"  {key}: {addr}")
+
     # フォールバック用の静的マッピング（テンプレート検出できない場合）
     fallback_mapping = {
         "motivation": "A9",
         "background": "A16",
         "service": "A27",
-        "partners": "M27",
         "employees": "T21",
+        "partners": "M27",
+        "related_companies": "A36",  # 関連企業
         "loans": "M36",
         "funds": "A45",
         "outlook": "M45",
@@ -613,21 +628,12 @@ async def download_plan_excel(session_id: str | None = Cookie(default=None)):
         cell_addr = mapping.get(key)
         if cell_addr and content:
             extracted_any = True
-            # 結合セルの場合でも安全に値を設定
             try:
-                cell = sheet[cell_addr]
-                # MergedCellの場合、unmergeしてから書き込む
-                if isinstance(cell, openpyxl.cell.cell.MergedCell):
-                    # 結合範囲を探して解除
-                    for merged_range in list(sheet.merged_cells.ranges):
-                        if cell.coordinate in merged_range:
-                            sheet.unmerge_cells(str(merged_range))
-                            break
-                # 値を設定
+                # 直接セルに値を設定（結合セルの左上セルは通常のCellオブジェクト）
                 sheet[cell_addr].value = content
-                print(f"[DEBUG] Successfully wrote to {cell_addr}")
+                print(f"[DEBUG] Successfully wrote '{content[:50]}...' to {cell_addr}")
             except Exception as e:
-                print(f"Warning: Could not write to cell {cell_addr}: {e}")
+                print(f"[ERROR] Could not write to cell {cell_addr}: {e}")
                 continue
 
     if not extracted_any and plan_text.strip():
@@ -708,7 +714,13 @@ async def download_plan_excel(session_id: str | None = Cookie(default=None)):
 
     zip_output.seek(0)
     zip_filename = f"創業計画書一式_{session_id[:8]}.zip"
-    headers = {"Content-Disposition": f'attachment; filename="{zip_filename}"'}
+    # URLエンコードしたファイル名をRFC 5987形式で指定
+    from urllib.parse import quote
+
+    encoded_filename = quote(zip_filename)
+    headers = {
+        "Content-Disposition": f"attachment; filename*=UTF-8''{encoded_filename}"
+    }
 
     return StreamingResponse(
         zip_output,

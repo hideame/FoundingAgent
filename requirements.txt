@@ -5,3 +5,5 @@ python-multipart
 google-cloud-aiplatform
 python-dotenv
 pdoc
+pytest
+openpyxl
