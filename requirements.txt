@@ -7,3 +7,8 @@ python-dotenv
 pdoc
 pytest
 openpyxl
+sqlalchemy
+aiomysql
+alembic
+greenlet
+cryptography

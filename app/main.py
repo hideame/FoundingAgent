@@ -7,12 +7,14 @@ from pathlib import Path
 
 import openpyxl
 from dotenv import load_dotenv
-from fastapi import Cookie, FastAPI, Form, Request, Response
+from fastapi import Cookie, Depends, FastAPI, Form, Request, Response
 from fastapi.responses import HTMLResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from openpyxl.utils import get_column_letter, range_boundaries
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.database import close_db, get_db, init_db
 from app.services.gemini_service import GeminiService
 from app.store import session_store
 
@@ -36,6 +38,27 @@ FastAPIを使用したWebサーバーとして機能し、以下の役割を担�
 load_dotenv()
 
 app = FastAPI(title="Founder's Pilot")
+
+
+# アプリケーション起動時の処理
+@app.on_event("startup")
+async def startup_event():
+    """
+    アプリケーション起動時にデータベースを初期化します。
+    """
+    await init_db()
+    print("[INFO] Database initialized successfully")
+
+
+# アプリケーション終了時の処理
+@app.on_event("shutdown")
+async def shutdown_event():
+    """
+    アプリケーション終了時にデータベース接続を閉じます。
+    """
+    await close_db()
+    print("[INFO] Database connection closed")
+
 
 # Initialize Gemini Service
 gemini_service = GeminiService()
@@ -108,7 +131,11 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 
 @app.get("/", response_class=HTMLResponse)
-async def read_root(request: Request, session_id: str | None = Cookie(default=None)):
+async def read_root(
+    request: Request,
+    session_id: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
+):
     """
     アプリケーションのメインページ（ダッシュボード）を表示します。
 
@@ -118,6 +145,7 @@ async def read_root(request: Request, session_id: str | None = Cookie(default=No
     Args:
         request (Request): FastAPIのリクエストオブジェクト
         session_id (str | None): クライアントのCookieから取得したセッションID
+        db (AsyncSession): データベースセッション
 
     Returns:
         TemplateResponse: レンダリングされた `index.html`
@@ -127,7 +155,7 @@ async def read_root(request: Request, session_id: str | None = Cookie(default=No
     chat_messages_html = ""  # ここで履歴HTML文字列を作る
 
     if session_id:
-        data = session_store.load_session(session_id)
+        data = await session_store.load_session(db, session_id)
         if data:
             user_tasks = data.get("tasks", TASKS)
             history = data.get("chat_history", [])
@@ -167,7 +195,11 @@ async def read_root(request: Request, session_id: str | None = Cookie(default=No
 
 
 @app.get("/chat/start", response_class=HTMLResponse)
-async def start_chat(request: Request, task_id: str | None = None):
+async def start_chat(
+    request: Request,
+    task_id: str | None = None,
+    db: AsyncSession = Depends(get_db),
+):
     """
     新しいチャットセッションを開始します。
 
@@ -177,6 +209,7 @@ async def start_chat(request: Request, task_id: str | None = None):
     Args:
         request (Request): FastAPIのリクエストオブジェクト
         task_id (str | None): 個別のタスクから開始する場合のタスクID（例: "motivation"）
+        db (AsyncSession): データベースセッション
 
     Returns:
         TemplateResponse: 初期メッセージを含む `components/chat_interface.html`
@@ -213,6 +246,7 @@ async def chat_message(
     request: Request,
     user_message: str = Form(...),
     session_id: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     ユーザーからのチャットメッセージを処理し、AIからの応答を返します。
@@ -229,6 +263,7 @@ async def chat_message(
         request (Request): FastAPIのリクエストオブジェクト
         user_message (str): フォームから送信されたユーザーのメッセージ
         session_id (str | None): CookieセッションID
+        db (AsyncSession): データベースセッション
 
     Returns:
         HTMLResponse: ユーザーメッセージ、AIメッセージ、およびもしあればUI更新用HTML（OOB Swap）を含むフラグメント
@@ -278,7 +313,7 @@ async def chat_message(
     import copy
 
     current_tasks = copy.deepcopy(TASKS)  # デフォルト値
-    session_data = session_store.load_session(session_id)
+    session_data = await session_store.load_session(db, session_id)
     if session_data and "tasks" in session_data:
         current_tasks = copy.deepcopy(session_data["tasks"])
 
@@ -329,13 +364,17 @@ async def chat_message(
     # 1. GeminiServiceから現在のチャット履歴を取得
     history_data = gemini_service.get_chat_history(session_id)
     # 2. 更新されたタスク状態を保存
-    session_store.save_session(session_id, current_tasks, history_data)
+    await session_store.save_session(db, session_id, current_tasks, history_data)
 
     return response
 
 
 @app.get("/plan/edit", response_class=HTMLResponse)
-async def edit_plan(request: Request, session_id: str | None = Cookie(default=None)):
+async def edit_plan(
+    request: Request,
+    session_id: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
+):
     """
     創業計画書の編集画面（エディタ）を取得します。
 
@@ -345,6 +384,7 @@ async def edit_plan(request: Request, session_id: str | None = Cookie(default=No
     Args:
         request (Request): FastAPIのリクエストオブジェクト
         session_id (str | None): CookieセッションID
+        db (AsyncSession): データベースセッション
 
     Returns:
         TemplateResponse: `components/plan_editor.html`
@@ -352,7 +392,7 @@ async def edit_plan(request: Request, session_id: str | None = Cookie(default=No
     if not session_id:
         return HTMLResponse("Session not found", status_code=400)
 
-    data = session_store.load_session(session_id)
+    data = await session_store.load_session(db, session_id)
     plan_text = ""
     if data:
         plan_text = data.get("plan_text", "")
@@ -368,6 +408,7 @@ async def save_plan(
     request: Request,
     plan_text: str = Form(...),
     session_id: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     編集された創業計画書テキストを保存します。
@@ -378,6 +419,7 @@ async def save_plan(
         request (Request): FastAPIのリクエストオブジェクト
         plan_text (str): フォームから送信された計画書テキスト
         session_id (str | None): CookieセッションID
+        db (AsyncSession): データベースセッション
 
     Returns:
         TemplateResponse: `components/plan_viewer.html`
@@ -386,14 +428,16 @@ async def save_plan(
         return HTMLResponse("Session not found", status_code=400)
 
     # 現在のセッションデータをロード
-    data = session_store.load_session(session_id)
+    data = await session_store.load_session(db, session_id)
     if not data:
         data = {"tasks": TASKS, "chat_history": []}
 
     # 保存
     tasks = data.get("tasks", TASKS)
     history = data.get("chat_history", [])
-    session_store.save_session(session_id, tasks, history, plan_text=plan_text)
+    await session_store.save_session(
+        db, session_id, tasks, history, plan_text=plan_text
+    )
 
     # 閲覧モードのHTMLを返す (plan_viewer.htmlのOOB部分は不要なので、plan_viewer.htmlの中身だけを返したいが、
     # plan_viewer.htmlはOOB含んでいる。
@@ -408,7 +452,9 @@ async def save_plan(
 
 @app.post("/plan/generate", response_class=HTMLResponse)
 async def generate_plan(
-    request: Request, session_id: str | None = Cookie(default=None)
+    request: Request,
+    session_id: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     これまでのチャット内容を元に、創業計画書のドラフトを生成します。
@@ -419,6 +465,7 @@ async def generate_plan(
     Args:
         request (Request): FastAPIのリクエストオブジェクト
         session_id (str | None): CookieセッションID
+        db (AsyncSession): データベースセッション
 
     Returns:
         TemplateResponse: 生成された計画書を表示する `components/plan_viewer.html`
@@ -439,12 +486,12 @@ async def generate_plan(
 
     # --- 生成されたプランの保存 ---
     # セッションストアに plan_text を保存しておく
-    current_data = session_store.load_session(session_id)
+    current_data = await session_store.load_session(db, session_id)
     if current_data:
         saved_tasks = current_data.get("tasks", TASKS)
         saved_history = current_data.get("chat_history", [])
-        session_store.save_session(
-            session_id, saved_tasks, saved_history, plan_text=plan_text
+        await session_store.save_session(
+            db, session_id, saved_tasks, saved_history, plan_text=plan_text
         )
 
     # ステップの状態を更新 (Conceptual: 1->Completed, 2->Current)
@@ -470,7 +517,10 @@ async def generate_plan(
 
 
 @app.get("/plan/download_excel")
-async def download_plan_excel(session_id: str | None = Cookie(default=None)):
+async def download_plan_excel(
+    session_id: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
+):
     """
     作成完了した創業計画書をExcel形式でZIP圧縮してダウンロードします。
 
@@ -482,6 +532,7 @@ async def download_plan_excel(session_id: str | None = Cookie(default=None)):
 
     Args:
         session_id (str | None): CookieセッションID
+        db (AsyncSession): データベースセッション
 
     Returns:
         StreamingResponse: ZIPファイル（application/zip）
@@ -489,7 +540,7 @@ async def download_plan_excel(session_id: str | None = Cookie(default=None)):
     if not session_id:
         return Response("Session not found", status_code=400)
 
-    data = session_store.load_session(session_id)
+    data = await session_store.load_session(db, session_id)
     if not data or not data.get("plan_text"):
         return Response("Plan text not found", status_code=404)
 
@@ -731,7 +782,9 @@ async def download_plan_excel(session_id: str | None = Cookie(default=None)):
 
 @app.post("/reset", response_class=HTMLResponse)
 async def reset_session(
-    request: Request, session_id: str | None = Cookie(default=None)
+    request: Request,
+    session_id: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
 ):
     """
     現在のセッションを完全にリセットし、初期状態に戻します。
@@ -742,13 +795,14 @@ async def reset_session(
     Args:
         request (Request): FastAPIのリクエストオブジェクト
         session_id (str | None): CookieセッションID
+        db (AsyncSession): データベースセッション
 
     Returns:
         HTMLResponse: リダイレクト用のJavaScriptを含むHTML
     """
     if session_id:
         # セッションデータを削除
-        session_store.delete_session(session_id)
+        await session_store.delete_session(db, session_id)
         # チャットセッションもリセット
         gemini_service.reset_chat_session(session_id)
 
