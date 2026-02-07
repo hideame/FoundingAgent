@@ -77,9 +77,7 @@ class BusinessPlan(Base):
     loans = Column(Text, comment="7. お借入の状況")
     funds = Column(Text, comment="8. 必要な資金と調達方法")
     outlook = Column(Text, comment="9. 事業の見通し")
-
-    # 全文テキスト（マークダウン形式の完全版）
-    full_text = Column(Text, comment="完全なドラフトテキスト（マークダウン）")
+    free_description = Column(Text, comment="10. 自由記述欄")
 
     created_at = Column(
         DateTime, default=datetime.utcnow, nullable=False, comment="作成日時"

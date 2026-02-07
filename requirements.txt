@@ -9,6 +9,7 @@ pytest
 openpyxl
 sqlalchemy
 aiomysql
+pymysql
 alembic
 greenlet
 cryptography

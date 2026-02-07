@@ -204,11 +204,3 @@ SHOW TABLES;
 # テーブル構造を確認
 DESCRIBE business_plans;
 ```
-
-## ライセンス
-
-MIT License
-
-## 作者
-
-hide

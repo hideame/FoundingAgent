@@ -28,20 +28,20 @@ class SessionStore:
         session_id: str,
         tasks_state: list,
         chat_history: list,
-        plan_text: str = None,
+        sections: dict = None,
     ):
         """
-        セッションの状態（タスク進捗とチャット履歴、計画書ドラフト）をデータベースに保存します。
+        セッションの状態（タスク進捗とチャット履歴、計画書セクション）をデータベースに保存します。
 
-        既存のデータがある場合、指定されなかったパラメータ（特にplan_text）は
-        既存の値を維持するようにマージ処理が行われます。
+        既存のデータがある場合、指定されなかったセクションは既存の値を維持します。
 
         Args:
             db (AsyncSession): データベースセッション
             session_id (str): 保存対象のセッションID
             tasks_state (list): タスクリストの辞書配列
             chat_history (list): チャット履歴の辞書配列 (Gemini API形式)
-            plan_text (str, optional): 生成された事業計画書のテキスト全文。指定しない場合は既存値を維持します。
+            sections (dict, optional): 更新する事業計画書セクションの辞書
+                例: {"motivation": "創業の動機の内容", "background": "経営者の略歴等の内容"}
         """
         try:
             # セッションの取得または作成
@@ -68,10 +68,13 @@ class SessionStore:
                 delete(TaskState).where(TaskState.session_id == session_id)
             )
             for task in tasks_state:
+                # main.pyのTASKS形式に対応: {"id": "task_id", "status": "done"/"pending"}
+                task_id = task.get("id", "")
+                task_status = task.get("status", "pending")
                 task_state = TaskState(
                     session_id=session_id,
-                    task_key=task.get("key", ""),
-                    completed=1 if task.get("completed") else 0,
+                    task_key=task_id,
+                    completed=1 if task_status == "done" else 0,
                 )
                 db.add(task_state)
 
@@ -88,19 +91,19 @@ class SessionStore:
                 )
                 db.add(chat_msg)
 
-            # 事業計画の更新
-            if plan_text is not None:
-                if session.business_plan:
-                    # 既存の計画を更新
-                    session.business_plan.full_text = plan_text
-                    session.business_plan.updated_at = datetime.utcnow()
-                else:
+            # 事業計画セクションの更新
+            if sections is not None:
+                if not session.business_plan:
                     # 新規作成
-                    business_plan = BusinessPlan(
-                        session_id=session_id,
-                        full_text=plan_text,
-                    )
-                    db.add(business_plan)
+                    session.business_plan = BusinessPlan(session_id=session_id)
+                    db.add(session.business_plan)
+
+                # セクションを更新
+                for key, value in sections.items():
+                    if hasattr(session.business_plan, key):
+                        setattr(session.business_plan, key, value)
+
+                session.business_plan.updated_at = datetime.utcnow()
 
             await db.commit()
 
@@ -136,10 +139,14 @@ class SessionStore:
                 return None
 
             # タスク状態を辞書配列に変換
-            tasks = [
-                {"key": task.task_key, "completed": bool(task.completed)}
-                for task in session.task_states
-            ]
+            # データベースにはstatus(done/pending)のみ保存されているので、
+            # main.pyでTASKSテンプレートとマージする必要がある
+            # ここではidとstatusのみを返す
+            task_states_dict = {}
+            for task in session.task_states:
+                task_states_dict[task.task_key] = (
+                    "done" if task.completed else "pending"
+                )
 
             # チャット履歴をGemini API形式に変換
             chat_history = [
@@ -150,15 +157,29 @@ class SessionStore:
                 for msg in session.chat_messages
             ]
 
-            # 事業計画テキスト
-            plan_text = (
-                session.business_plan.full_text if session.business_plan else None
-            )
+            # 事業計画の各セクション
+            sections = {}
+            if session.business_plan:
+                for section_key in [
+                    "motivation",
+                    "background",
+                    "service",
+                    "employees",
+                    "partners",
+                    "related_companies",
+                    "loans",
+                    "funds",
+                    "outlook",
+                    "free_description",
+                ]:
+                    sections[section_key] = getattr(
+                        session.business_plan, section_key, None
+                    )
 
             return {
-                "tasks": tasks,
+                "task_states": task_states_dict,  # {"task_id": "done"/"pending"}
                 "chat_history": chat_history,
-                "plan_text": plan_text,
+                "sections": sections,
             }
 
         except Exception as e:
