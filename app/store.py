@@ -93,19 +93,44 @@ class SessionStore:
 
             # 事業計画セクションの更新
             if sections is not None:
-                if not session.business_plan:
-                    # 新規作成
-                    session.business_plan = BusinessPlan(session_id=session_id)
-                    db.add(session.business_plan)
+                # None値のセクションをフィルタリング（既存データを保持）
+                valid_sections = {k: v for k, v in sections.items() if v is not None}
 
-                # セクションを更新
-                for key, value in sections.items():
-                    if hasattr(session.business_plan, key):
-                        setattr(session.business_plan, key, value)
+                if valid_sections:  # 有効なセクションがある場合のみ処理
+                    print(
+                        f"[DEBUG] save_session - Saving sections: {list(valid_sections.keys())}"
+                    )
+                    if not session.business_plan:
+                        # 新規作成
+                        print(
+                            f"[DEBUG] save_session - Creating new BusinessPlan for session {session_id}"
+                        )
+                        session.business_plan = BusinessPlan(session_id=session_id)
+                        db.add(session.business_plan)
 
-                session.business_plan.updated_at = datetime.utcnow()
+                    # セクションを更新（None以外のみ）
+                    for key, value in valid_sections.items():
+                        if hasattr(session.business_plan, key):
+                            setattr(session.business_plan, key, value)
+                            # デバッグ: 改行を含むデータの確認
+                            preview = value[:50] if value else "None"
+                            has_newline = "\n" in value if value else False
+                            print(
+                                f"[DEBUG] save_session - Set {key} = {preview}... (has_newline: {has_newline}, length: {len(value) if value else 0})"
+                            )
+                        else:
+                            print(
+                                f"[DEBUG] save_session - Warning: {key} is not a valid attribute"
+                            )
+
+                    session.business_plan.updated_at = datetime.utcnow()
+                else:
+                    print(
+                        f"[DEBUG] save_session - No valid sections to save (all None)"
+                    )
 
             await db.commit()
+            print(f"[DEBUG] save_session - Successfully committed session {session_id}")
 
         except Exception as e:
             await db.rollback()
@@ -160,6 +185,9 @@ class SessionStore:
             # 事業計画の各セクション
             sections = {}
             if session.business_plan:
+                print(
+                    f"[DEBUG] load_session - business_plan found for session {session_id}"
+                )
                 for section_key in [
                     "motivation",
                     "background",
@@ -172,9 +200,18 @@ class SessionStore:
                     "outlook",
                     "free_description",
                 ]:
-                    sections[section_key] = getattr(
-                        session.business_plan, section_key, None
-                    )
+                    value = getattr(session.business_plan, section_key, None)
+                    sections[section_key] = value
+                    if value:
+                        print(f"[DEBUG] load_session - {section_key}: {value[:50]}...")
+            else:
+                print(
+                    f"[DEBUG] load_session - No business_plan found for session {session_id}"
+                )
+
+            print(
+                f"[DEBUG] load_session - Returning {len([k for k, v in sections.items() if v])} sections with content"
+            )
 
             return {
                 "task_states": task_states_dict,  # {"task_id": "done"/"pending"}

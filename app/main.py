@@ -228,8 +228,8 @@ def extract_single_section_from_response(ai_response: str, task_id: str) -> str 
     """
     AI応答から特定のタスクに対応するセクションの内容を抽出します。
 
-    タスク完了時に、AI応答にドラフト提案が含まれている場合、
-    そのセクションの内容だけを抽出して返します。
+    AI応答内の [[CONTENT_START]] と [[CONTENT_END]] マーカーで囲まれた
+    コンテンツを取得します。
 
     Args:
         ai_response (str): AIからの応答テキスト
@@ -238,49 +238,41 @@ def extract_single_section_from_response(ai_response: str, task_id: str) -> str 
     Returns:
         str | None: 抽出されたセクション内容。見つからない場合はNone
     """
-    # タスクIDから日本語の見出しにマッピング
-    task_to_label = {
-        "motivation": "創業の動機",
-        "background": "経営者の略歴等",
-        "service": "取扱商品・サービス",
-        "employees": "従業員",
-        "partners": "取引先・取引関係等",
-        "related_companies": "関連企業",
-        "loans": "お借入の状況",
-        "funds": "必要な資金と調達方法",
-        "outlook": "事業の見通し",
-        "free_description": "自由記述欄",
-    }
+    print(f"[DEBUG] Extracting content for task: {task_id}")
+    print(f"[DEBUG] AI response length: {len(ai_response)} chars")
+    print(f"[DEBUG] AI response preview: {ai_response[:300]}")
 
-    label = task_to_label.get(task_id)
-    if not label:
+    # [[CONTENT_START]] と [[CONTENT_END]] の間のコンテンツを取得
+    start_marker = "[[CONTENT_START]]"
+    end_marker = "[[CONTENT_END]]"
+
+    start_pos = ai_response.find(start_marker)
+    end_pos = ai_response.find(end_marker)
+
+    if start_pos == -1 or end_pos == -1:
+        print(f"[WARNING] Content markers not found in AI response")
+        print(f"[WARNING]   start_marker found: {start_pos != -1}")
+        print(f"[WARNING]   end_marker found: {end_pos != -1}")
         return None
 
-    print(f"[DEBUG] Searching for label: '{label}' in AI response")
+    if start_pos >= end_pos:
+        print(f"[ERROR] Invalid marker positions: start={start_pos}, end={end_pos}")
+        return None
 
-    # 見出しパターンでセクションを抽出（柔軟なパターンマッチング）
-    # "## 1. 創業の動機" や "創業の動機:" などに対応
-    pattern = rf"(?:##\s*\d*\.?\s*)?{re.escape(label)}\s*(?:\n|:|：)\s*(.*?)(?=(?:##\s*\d*\.?\s*(?:{'|'.join(task_to_label.values())})|$))"
+    # マーカー間のコンテンツを取得（マーカー自体は除外）
+    content_start = start_pos + len(start_marker)
+    content = ai_response[content_start:end_pos]
 
-    print(f"[DEBUG] Regex pattern: {pattern[:200]}")
+    # 前後の空白・改行を削除（内部の改行は保持）
+    content = content.strip()
 
-    match = re.search(pattern, ai_response, re.DOTALL | re.MULTILINE)
-    if match:
-        print(f"[DEBUG] Match found! Extracting content...")
-        content = match.group(1).strip()
-        # マークダウン記号やマーカーを除去
-        content = re.sub(r"[\*#]+", "", content)
-        content = re.sub(r"\[\[DRAFT_PROPOSED\]\]", "", content)
-        content = re.sub(r"\[\[COMPLETED:[a-z_]+\]\]", "", content)
-        content = re.sub(r"\n\s*\n+", "\n\n", content)
-        return content.strip()
-    else:
-        print(f"[DEBUG] No match found for label '{label}'")
-        print(
-            f"[DEBUG] Available labels in response: {[label_name for label_name in task_to_label.values() if label_name in ai_response]}"
-        )
+    print(f"[DEBUG] ✓ Extracted content:")
+    print(f"[DEBUG]   Length: {len(content)} chars")
+    print(f"[DEBUG]   Preview: {content[:200]}...")
+    print(f"[DEBUG]   Contains newlines: {chr(10) in content}")
+    print(f"[DEBUG]   Number of lines: {len(content.splitlines())}")
 
-    return None
+    return content if content else None
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -527,11 +519,12 @@ async def chat_message(
 
                 if section_content:
                     print(
-                        f"[DEBUG] Extracted section content for {completed_task_id}: {section_content[:100]}..."
+                        f"[DEBUG] ✓ Extracted section content for {completed_task_id}:"
                     )
+                    print(f"[DEBUG]   Length: {len(section_content)} chars")
+                    print(f"[DEBUG]   Preview: {section_content[:100]}...")
+
                     # 該当セクションのみをデータベースに保存
-                    # 既存のチャット履歴は後でまとめて保存するので、ここでは sections だけ更新
-                    # 注: save_sessionは既存セクションを上書きしないので、部分更新が可能
                     section_update = {completed_task_id: section_content}
 
                     # 現在のタスク状態とチャット履歴を取得して保存
@@ -543,11 +536,12 @@ async def chat_message(
                         history_data_temp,
                         sections=section_update,
                     )
-                    print(f"[DEBUG] Saved section {completed_task_id} to database")
+                    print(f"[DEBUG] ✓ Saved section {completed_task_id} to database")
                 else:
                     print(
-                        f"[WARNING] Could not extract section content for {completed_task_id}"
+                        f"[WARNING] ✗ Could not extract section content for {completed_task_id}"
                     )
+                    print(f"[WARNING]   AI response was: {ai_response_text[:300]}")
 
                 break
 
@@ -597,33 +591,63 @@ async def edit_plan(
         return HTMLResponse("Session not found", status_code=400)
 
     data = await session_store.load_session(db, session_id)
-    plan_text = ""
+    print(f"[DEBUG] /plan/edit - session_id: {session_id}")
+    print(f"[DEBUG] /plan/edit - data loaded: {data is not None}")
+
+    sections = {}
     if data and data.get("sections"):
-        # セクションから全文を再構築
-        plan_text = build_plan_text_from_sections(data["sections"])
+        sections = data["sections"]
+        print(f"[DEBUG] /plan/edit - sections keys: {list(sections.keys())}")
+        print(
+            f"[DEBUG] /plan/edit - sections with content: {[k for k, v in sections.items() if v]}"
+        )
+    else:
+        # 空のセクション辞書を用意（テンプレートでエラーを防ぐ）
+        sections = {
+            "motivation": None,
+            "background": None,
+            "service": None,
+            "employees": None,
+            "partners": None,
+            "related_companies": None,
+            "loans": None,
+            "funds": None,
+            "outlook": None,
+            "free_description": None,
+        }
+        print("[DEBUG] /plan/edit - No sections found, using empty template")
 
     return templates.TemplateResponse(
         "components/plan_editor.html",
-        {"request": request, "plan_text": plan_text},
+        {"request": request, "sections": sections},
     )
 
 
 @app.post("/plan/save", response_class=HTMLResponse)
 async def save_plan(
     request: Request,
-    plan_text: str = Form(...),
+    motivation: str = Form(default=""),
+    background: str = Form(default=""),
+    service: str = Form(default=""),
+    employees: str = Form(default=""),
+    partners: str = Form(default=""),
+    related_companies: str = Form(default=""),
+    loans: str = Form(default=""),
+    funds: str = Form(default=""),
+    outlook: str = Form(default=""),
+    free_description: str = Form(default=""),
     session_id: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_db),
 ):
     """
     編集された創業計画書テキストを保存します。
 
-    全文テキストを各セクションに分割してデータベースに保存し、
+    各セクションのフォームデータを受け取り、データベースに保存し、
     保存後は閲覧モード（Viewer）のHTMLを返します。
 
     Args:
         request (Request): FastAPIのリクエストオブジェクト
-        plan_text (str): フォームから送信された計画書テキスト
+        motivation - free_description (str): 各セクションのフォームデータ
         session_id (str | None): CookieセッションID
         db (AsyncSession): データベースセッション
 
@@ -638,8 +662,38 @@ async def save_plan(
     if not data:
         data = {"task_states": {}, "chat_history": []}
 
-    # 全文テキストをセクション別に分割
-    sections = extract_sections_from_text(plan_text)
+    # デバッグ: 受信したフォームデータを確認
+    print(f"[DEBUG] /plan/save - Received background data:")
+    print(f"[DEBUG]   Length: {len(background)} chars")
+    print(f"[DEBUG]   Raw: {repr(background[:200])}")
+    print(f"[DEBUG]   Contains newlines: {'\\n' in background or '\\r' in background}")
+
+    # フォームデータからセクション辞書を構築
+    # strip()は前後の空白のみ削除し、内部の改行は保持する
+    sections = {
+        "motivation": motivation.strip() if motivation.strip() else None,
+        "background": background.strip() if background.strip() else None,
+        "service": service.strip() if service.strip() else None,
+        "employees": employees.strip() if employees.strip() else None,
+        "partners": partners.strip() if partners.strip() else None,
+        "related_companies": related_companies.strip()
+        if related_companies.strip()
+        else None,
+        "loans": loans.strip() if loans.strip() else None,
+        "funds": funds.strip() if funds.strip() else None,
+        "outlook": outlook.strip() if outlook.strip() else None,
+        "free_description": free_description.strip()
+        if free_description.strip()
+        else None,
+    }
+
+    print(
+        f"[DEBUG] /plan/save - Saving {len([v for v in sections.values() if v])} sections with content"
+    )
+    if sections.get("background"):
+        print(
+            f"[DEBUG] /plan/save - background after strip: {repr(sections['background'][:200])}"
+        )
 
     # タスク状態をTASKS形式に変換
     task_states = data.get("task_states", {})
@@ -655,6 +709,9 @@ async def save_plan(
     await session_store.save_session(
         db, session_id, current_tasks, history, sections=sections
     )
+
+    # 表示用に全文テキストを再構築
+    plan_text = build_plan_text_from_sections(sections)
 
     # 閲覧モードのHTMLを返す
     return templates.TemplateResponse(

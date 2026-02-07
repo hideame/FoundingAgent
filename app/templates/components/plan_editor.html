@@ -1,9 +1,9 @@
 <div id="plan-container" class="flex flex-col h-full bg-white rounded-lg shadow-sm border border-gray-200 overflow-hidden">
   <!-- Header -->
-  <div class="bg-blue-50 px-6 py-4 border-b border-blue-200 flex justify-between items-center">
+  <div class="bg-blue-50 px-6 py-4 border-b border-blue-200 flex justify-between items-center sticky top-0 z-10">
     <div>
       <h2 class="text-lg font-bold text-blue-900">創業計画書（編集モード）</h2>
-      <p class="text-sm text-blue-700">内容を自由に修正してください。</p>
+      <p class="text-sm text-blue-700">各項目を個別に編集できます。</p>
     </div>
     <div class="flex gap-2">
       <button hx-post="/plan/save"
@@ -19,12 +19,158 @@
     </div>
   </div>
 
-  <!-- Editor -->
-  <div class="flex-1 p-0 overflow-hidden">
-    <form id="plan-editor-form" class="h-full flex flex-col">
-        <textarea name="plan_text"
-                  class="flex-1 w-full h-full p-8 font-serif leading-relaxed text-gray-800 focus:outline-none resize-none border-none focus:ring-0 text-base"
-                  spellcheck="false">{{ plan_text }}</textarea>
+  <!-- Editor - Section by Section -->
+  <div class="flex-1 overflow-y-auto">
+    <form id="plan-editor-form" class="p-6 space-y-6">
+      <!-- 1. 創業の動機 -->
+      <div class="bg-white border border-gray-200 rounded-lg p-5 hover:border-blue-300 transition-colors">
+        <label class="block mb-3">
+          <span class="text-sm font-bold text-gray-700 flex items-center gap-2">
+            <span class="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">1</span>
+            創業の動機
+          </span>
+          <span class="text-xs text-gray-500 mt-1 block">創業されるのは、どのような目的、動機からですか</span>
+        </label>
+        <textarea name="motivation"
+                  rows="5"
+                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
+                  placeholder="なぜこの事業を始めるのか、熱意と目的を記載してください">{{ sections.motivation or '' }}</textarea>
+      </div>
+
+      <!-- 2. 経営者の略歴等 -->
+      <div class="bg-white border border-gray-200 rounded-lg p-5 hover:border-blue-300 transition-colors">
+        <label class="block mb-3">
+          <span class="text-sm font-bold text-gray-700 flex items-center gap-2">
+            <span class="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">2</span>
+            経営者の略歴等
+          </span>
+          <span class="text-xs text-gray-500 mt-1 block">勤務先名だけではなく、担当業務や役職、身につけた技能等についても記載してください</span>
+        </label>
+        <textarea name="background"
+                  rows="6"
+                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
+                  placeholder="これまでの経歴、担当業務、役職、身につけた技能などを記載してください">{{ sections.background or '' }}</textarea>
+      </div>
+
+      <!-- 3. 取扱商品・サービス -->
+      <div class="bg-white border border-gray-200 rounded-lg p-5 hover:border-blue-300 transition-colors">
+        <label class="block mb-3">
+          <span class="text-sm font-bold text-gray-700 flex items-center gap-2">
+            <span class="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">3</span>
+            取扱商品・サービス
+          </span>
+          <span class="text-xs text-gray-500 mt-1 block">商品・サービスの内容とセールスポイント</span>
+        </label>
+        <textarea name="service"
+                  rows="6"
+                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
+                  placeholder="取扱商品・サービスの内容とセールスポイントを記載してください">{{ sections.service or '' }}</textarea>
+      </div>
+
+      <!-- 4. 従業員 -->
+      <div class="bg-white border border-gray-200 rounded-lg p-5 hover:border-blue-300 transition-colors">
+        <label class="block mb-3">
+          <span class="text-sm font-bold text-gray-700 flex items-center gap-2">
+            <span class="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">4</span>
+            従業員
+          </span>
+          <span class="text-xs text-gray-500 mt-1 block">常勤役員、従業員の人数など</span>
+        </label>
+        <textarea name="employees"
+                  rows="3"
+                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
+                  placeholder="常勤役員、従業員（正社員・パート・アルバイト）の人数を記載してください">{{ sections.employees or '' }}</textarea>
+      </div>
+
+      <!-- 5. 取引先・取引関係等 -->
+      <div class="bg-white border border-gray-200 rounded-lg p-5 hover:border-blue-300 transition-colors">
+        <label class="block mb-3">
+          <span class="text-sm font-bold text-gray-700 flex items-center gap-2">
+            <span class="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">5</span>
+            取引先・取引関係等
+          </span>
+          <span class="text-xs text-gray-500 mt-1 block">販売先、仕入先、掛取引の条件など</span>
+        </label>
+        <textarea name="partners"
+                  rows="5"
+                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
+                  placeholder="販売先、仕入先、外注先、掛取引の条件などを記載してください">{{ sections.partners or '' }}</textarea>
+      </div>
+
+      <!-- 6. 関連企業 -->
+      <div class="bg-white border border-gray-200 rounded-lg p-5 hover:border-blue-300 transition-colors">
+        <label class="block mb-3">
+          <span class="text-sm font-bold text-gray-700 flex items-center gap-2">
+            <span class="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">6</span>
+            関連企業
+          </span>
+          <span class="text-xs text-gray-500 mt-1 block">申込人もしくは法人代表者または配偶者が経営する企業がある場合</span>
+        </label>
+        <textarea name="related_companies"
+                  rows="3"
+                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
+                  placeholder="関連企業がある場合はその情報を記載してください。該当なしの場合は「該当なし」と記載してください">{{ sections.related_companies or '' }}</textarea>
+      </div>
+
+      <!-- 7. お借入の状況 -->
+      <div class="bg-white border border-gray-200 rounded-lg p-5 hover:border-blue-300 transition-colors">
+        <label class="block mb-3">
+          <span class="text-sm font-bold text-gray-700 flex items-center gap-2">
+            <span class="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">7</span>
+            お借入の状況
+          </span>
+          <span class="text-xs text-gray-500 mt-1 block">法人の場合、代表者の方のお借入</span>
+        </label>
+        <textarea name="loans"
+                  rows="3"
+                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
+                  placeholder="住宅ローン、カードローン、その他の借入状況を記載してください。該当なしの場合は「該当なし」と記載してください">{{ sections.loans or '' }}</textarea>
+      </div>
+
+      <!-- 8. 必要な資金と調達方法 -->
+      <div class="bg-white border border-gray-200 rounded-lg p-5 hover:border-blue-300 transition-colors">
+        <label class="block mb-3">
+          <span class="text-sm font-bold text-gray-700 flex items-center gap-2">
+            <span class="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">8</span>
+            必要な資金と調達方法
+          </span>
+          <span class="text-xs text-gray-500 mt-1 block">設備資金・運転資金の総額と、自己資金・借入金など</span>
+        </label>
+        <textarea name="funds"
+                  rows="6"
+                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
+                  placeholder="必要な資金の合計と内訳、調達方法（自己資金、借入金など）を記載してください">{{ sections.funds or '' }}</textarea>
+      </div>
+
+      <!-- 9. 事業の見通し -->
+      <div class="bg-white border border-gray-200 rounded-lg p-5 hover:border-blue-300 transition-colors">
+        <label class="block mb-3">
+          <span class="text-sm font-bold text-gray-700 flex items-center gap-2">
+            <span class="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">9</span>
+            事業の見通し（月平均）
+          </span>
+          <span class="text-xs text-gray-500 mt-1 block">創業当初と軌道に乗った後の売上・利益予測</span>
+        </label>
+        <textarea name="outlook"
+                  rows="6"
+                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
+                  placeholder="創業当初と軌道に乗った後の売上高、売上原価、経費、利益の見通しと根拠を記載してください">{{ sections.outlook or '' }}</textarea>
+      </div>
+
+      <!-- 10. 自由記述欄 -->
+      <div class="bg-white border border-gray-200 rounded-lg p-5 hover:border-blue-300 transition-colors">
+        <label class="block mb-3">
+          <span class="text-sm font-bold text-gray-700 flex items-center gap-2">
+            <span class="flex items-center justify-center w-6 h-6 bg-blue-100 text-blue-700 rounded-full text-xs font-bold">10</span>
+            自由記述欄
+          </span>
+          <span class="text-xs text-gray-500 mt-1 block">アピールポイント、事業を行ううえでの悩み、希望するアドバイス等</span>
+        </label>
+        <textarea name="free_description"
+                  rows="5"
+                  class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
+                  placeholder="事業のアピールポイントや悩み、希望するアドバイスなどを自由に記載してください">{{ sections.free_description or '' }}</textarea>
+      </div>
     </form>
   </div>
 </div>
