@@ -1,3 +1,10 @@
+"""
+Google Gemini API (Vertex AI) との連携を担当するサービスモジュールです。
+
+チャットセッションの管理、プロンプトの構築、モデルからの応答生成、
+および事業計画書の生成ロジックをカプセル化しています。
+"""
+
 import logging
 import os
 import traceback
@@ -10,7 +17,23 @@ logger = logging.getLogger(__name__)
 
 
 class GeminiService:
+    """
+    Google Vertex AI Geminiモデルへのインターフェースを提供するクラスです。
+
+    チャットセッションの状態管理は簡易的にメモリ上で行いますが、
+    永続化層（SessionStore）からの復元にも対応しています。
+    """
+
     def __init__(self, project_id: str = None, location: str = None):
+        """
+        GeminiServiceを初期化します。
+
+        環境変数 `GOOGLE_CLOUD_PROJECT` および `GOOGLE_CLOUD_LOCATION` が設定されていることを前提とします。
+
+        Args:
+            project_id (str, optional): Google Cloud Project ID. Defaults to None.
+            location (str, optional): Google Cloud Region. Defaults to None.
+        """
         self.project_id = project_id or os.getenv("GOOGLE_CLOUD_PROJECT")
         self.location = location or os.getenv("GOOGLE_CLOUD_LOCATION", "us-central1")
 
@@ -33,8 +56,17 @@ class GeminiService:
         self, session_id: str, initial_task: str = None
     ) -> str:
         """
-        新しいチャットセッションを開始し、履歴を管理します。
-        initial_task が指定されている場合、そのタスクに関するヒアリングから開始します。
+        新しいチャットセッションを開始します。
+
+        システムプロンプトを設定し、必要であれば特定のタスク（initial_task）に焦点を当てた
+        初期メッセージを生成して返します。
+
+        Args:
+            session_id (str): セッションID
+            initial_task (str, optional): チャット開始時にフォーカスするタスクID（例: "motivation"）
+
+        Returns:
+            str: AIからの初期挨拶メッセージ
         """
         if not self.is_initialized:
             return "（システムエラー: Google Cloudへの接続設定が必要です。）"

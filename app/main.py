@@ -16,6 +16,22 @@ from openpyxl.utils import get_column_letter, range_boundaries
 from app.services.gemini_service import GeminiService
 from app.store import session_store
 
+"""
+Founder's Pilot アプリケーションのメインエントリポイントです。
+
+FastAPIを使用したWebサーバーとして機能し、以下の役割を担います。
+- 静的ファイルとHTMLテンプレートの配信
+- クライアント（ブラウザ）からのチャットメッセージの受信とAI応答の返却
+- セッション管理（Cookieを使用）
+- 創業計画書の編集、保存、生成
+- 完成した計画書（Excel）と記入例（PDF）のZIPダウンロード提供
+
+主なエンドポイント:
+- `/`: アプリケーションのルート（ダッシュボード）
+- `/chat/*`: チャット機能関連（開始、メッセージ送信）
+- `/plan/*`: 計画書の編集、保存、生成、ダウンロード
+"""
+
 # Load environment variables first
 load_dotenv()
 
@@ -93,6 +109,19 @@ templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request, session_id: str | None = Cookie(default=None)):
+    """
+    アプリケーションのメインページ（ダッシュボード）を表示します。
+
+    CookieからセッションIDを取得し、セッションが存在する場合は
+    これまでのタスク進捗状況とチャット履歴を復元して表示します。
+
+    Args:
+        request (Request): FastAPIのリクエストオブジェクト
+        session_id (str | None): クライアントのCookieから取得したセッションID
+
+    Returns:
+        TemplateResponse: レンダリングされた `index.html`
+    """
     # セッションIDがあればデータをロード
     user_tasks = TASKS  # デフォルト
     chat_messages_html = ""  # ここで履歴HTML文字列を作る
@@ -140,9 +169,17 @@ async def read_root(request: Request, session_id: str | None = Cookie(default=No
 @app.get("/chat/start", response_class=HTMLResponse)
 async def start_chat(request: Request, task_id: str | None = None):
     """
-    チャットを開始するエンドポイント。
-    新規セッションIDを発行してCookieにセットし、初期メッセージを返します。
-    task_id が指定されている場合、そのタスクに合わせて初期メッセージを生成します。
+    新しいチャットセッションを開始します。
+
+    新規にUUIDを生成してセッションIDとし、AIエージェントからの初期挨拶メッセージを取得して返します。
+    特定のタスクIDが指定された場合、そのタスクのヒアリングから開始するようにAIに指示します。
+
+    Args:
+        request (Request): FastAPIのリクエストオブジェクト
+        task_id (str | None): 個別のタスクから開始する場合のタスクID（例: "motivation"）
+
+    Returns:
+        TemplateResponse: 初期メッセージを含む `components/chat_interface.html`
     """
     session_id = str(uuid.uuid4())
 
@@ -178,8 +215,23 @@ async def chat_message(
     session_id: str | None = Cookie(default=None),
 ):
     """
-    ユーザーからのメッセージを受け取り、チャット履歴に追加して応答を返します。
-    Cookieからsession_idを取得して利用します。
+    ユーザーからのチャットメッセージを処理し、AIからの応答を返します。
+
+    主な処理フロー:
+    1. ユーザーメッセージをチャット履歴に追加
+    2. Gemini Service を用いてAI応答を生成
+    3. AI応答内の特殊コマンド（マーカー）を検出し、以下の処理を実行
+       - `[[DRAFT_PROPOSED]]`: ドラフト提案ボタン（OK/修正）を表示
+       - `[[COMPLETED:{task_id}]]`: 指定されたタスクを完了状態(done)に更新し、チェックボックスをオンにする
+    4. 更新されたセッション状態（タスク、履歴）を保存
+
+    Args:
+        request (Request): FastAPIのリクエストオブジェクト
+        user_message (str): フォームから送信されたユーザーのメッセージ
+        session_id (str | None): CookieセッションID
+
+    Returns:
+        HTMLResponse: ユーザーメッセージ、AIメッセージ、およびもしあればUI更新用HTML（OOB Swap）を含むフラグメント
     """
     # ユーザーのメッセージを表示するためのHTML
     user_msg_html = templates.get_template("components/message.html").render(
@@ -285,7 +337,17 @@ async def chat_message(
 @app.get("/plan/edit", response_class=HTMLResponse)
 async def edit_plan(request: Request, session_id: str | None = Cookie(default=None)):
     """
-    創業計画書の編集画面を表示します。
+    創業計画書の編集画面（エディタ）を取得します。
+
+    セッションに保存されている現在の計画書テキスト（ドラフト）を読み込み、
+    編集用フォームにセットして返します。
+
+    Args:
+        request (Request): FastAPIのリクエストオブジェクト
+        session_id (str | None): CookieセッションID
+
+    Returns:
+        TemplateResponse: `components/plan_editor.html`
     """
     if not session_id:
         return HTMLResponse("Session not found", status_code=400)
@@ -308,7 +370,17 @@ async def save_plan(
     session_id: str | None = Cookie(default=None),
 ):
     """
-    編集された創業計画書を保存し、閲覧モードに戻ります。
+    編集された創業計画書テキストを保存します。
+
+    保存後は閲覧モード（Viewer）のHTMLを返し、UIをエディタからビューアに切り替えます。
+
+    Args:
+        request (Request): FastAPIのリクエストオブジェクト
+        plan_text (str): フォームから送信された計画書テキスト
+        session_id (str | None): CookieセッションID
+
+    Returns:
+        TemplateResponse: `components/plan_viewer.html`
     """
     if not session_id:
         return HTMLResponse("Session not found", status_code=400)
@@ -339,8 +411,17 @@ async def generate_plan(
     request: Request, session_id: str | None = Cookie(default=None)
 ):
     """
-    創業計画書のドラフトを生成し、表示します。
-    ステッパーの状態も更新します。
+    これまでのチャット内容を元に、創業計画書のドラフトを生成します。
+
+    Gemini APIを使用して、会話履歴全体から創業計画書形式のテキストを生成し、
+    セッションに保存します。また、ステッパー（進捗表示）を「創業計画書作成」フェーズに進めます。
+
+    Args:
+        request (Request): FastAPIのリクエストオブジェクト
+        session_id (str | None): CookieセッションID
+
+    Returns:
+        TemplateResponse: 生成された計画書を表示する `components/plan_viewer.html`
     """
     if not session_id:
         # セッションがない場合はエラー表示
@@ -391,7 +472,19 @@ async def generate_plan(
 @app.get("/plan/download_excel")
 async def download_plan_excel(session_id: str | None = Cookie(default=None)):
     """
-    保存された創業計画書データをExcelテンプレートに書き込み、ダウンロードさせます。
+    作成完了した創業計画書をExcel形式でZIP圧縮してダウンロードします。
+
+    1. セッションから計画書テキスト(`plan_text`)を取得
+    2. 正規表現を用いて各セクション（創業の動機、略歴など）を抽出
+    3. `templates/startup_plan_template.xlsx` を読み込み、対応するセルに転記
+    4. 計画書の内容から業種を推測し、適切な記入例PDF（`static/templates/examples/*.pdf`）を選択
+    5. ExcelファイルとPDFファイルをZIPアーカイブにまとめてストリーミング返却
+
+    Args:
+        session_id (str | None): CookieセッションID
+
+    Returns:
+        StreamingResponse: ZIPファイル（application/zip）
     """
     if not session_id:
         return Response("Session not found", status_code=400)
@@ -629,8 +722,17 @@ async def reset_session(
     request: Request, session_id: str | None = Cookie(default=None)
 ):
     """
-    セッションをリセットします。
-    チャット履歴、タスク進捗を初期化し、再び最初からやり直せるようにします。
+    現在のセッションを完全にリセットし、初期状態に戻します。
+
+    サーバー側のセッションデータと会話履歴を削除し、
+    トップページへリダイレクト（クライアントサイドリダイレクト）を行います。
+
+    Args:
+        request (Request): FastAPIのリクエストオブジェクト
+        session_id (str | None): CookieセッションID
+
+    Returns:
+        HTMLResponse: リダイレクト用のJavaScriptを含むHTML
     """
     if session_id:
         # セッションデータを削除

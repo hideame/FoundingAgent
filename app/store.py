@@ -1,3 +1,10 @@
+"""
+アプリケーションのデータ永続化を担当するモジュールです。
+
+各ユーザーセッションのタスク進捗状況、チャット履歴、および
+作成された事業計画書のテキストデータをJSONファイルとしてファイルシステム上に保存・管理します。
+"""
+
 import json
 from pathlib import Path
 
@@ -6,10 +13,30 @@ DATA_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class SessionStore:
+    """
+    セッションデータをファイルシステム上で管理するクラスです。
+
+    各セッションデータは data/ ディレクトリ直下に `{session_id}.json` という名前で保存されます。
+    JSONファイルには、タスクの進捗状況、チャット履歴、生成された計画書テキストが含まれます。
+    """
+
     def __init__(self):
+        """
+        SessionStoreを初期化します。
+        データ保存ディレクトリ（DATA_DIR）を設定します。
+        """
         self.data_dir = DATA_DIR
 
     def _get_file_path(self, session_id: str) -> Path:
+        """
+        指定されたセッションIDに対応するJSONファイルのパスを返します。
+
+        Args:
+            session_id (str): セッションID
+
+        Returns:
+            Path: JSONファイルのパス
+        """
         return self.data_dir / f"{session_id}.json"
 
     def save_session(
@@ -21,6 +48,15 @@ class SessionStore:
     ):
         """
         セッションの状態（タスク進捗とチャット履歴、計画書ドラフト）をJSONファイルとして保存します。
+
+        既存のデータがある場合、指定されなかったパラメータ（特にplan_text）は
+        既存の値を維持するようにマージ処理が行われます。
+
+        Args:
+            session_id (str): 保存対象のセッションID
+            tasks_state (list): タスクリストの辞書配列
+            chat_history (list): チャット履歴の辞書配列 (Gemini API形式)
+            plan_text (str, optional): 生成された事業計画書のテキスト全文。指定しない場合は既存値を維持します。
         """
         data = {"tasks": tasks_state, "chat_history": chat_history}
         if plan_text is not None:
@@ -44,7 +80,13 @@ class SessionStore:
 
     def load_session(self, session_id: str) -> dict | None:
         """
-        セッションの状態を読み込みます。
+        指定されたセッションIDのデータをファイルから読み込みます。
+
+        Args:
+            session_id (str): 読み込むセッションID
+
+        Returns:
+            dict | None: セッションデータの辞書。ファイルが存在しない場合は None を返します。
         """
         file_path = self._get_file_path(session_id)
         if not file_path.exists():
@@ -59,7 +101,11 @@ class SessionStore:
 
     def delete_session(self, session_id: str):
         """
-        セッションデータを削除します。
+        指定されたセッションのデータを完全に削除します。
+        ファイルシステムからJSONファイルを削除します。
+
+        Args:
+            session_id (str): 削除するセッションID
         """
         file_path = self._get_file_path(session_id)
         if file_path.exists():
