@@ -66,6 +66,11 @@ class BusinessPlan(Base):
         unique=True,
         comment="セッションID",
     )
+    industry_type = Column(
+        String(50),
+        nullable=True,
+        comment="業種タイプ（software, restaurant, beauty等）",
+    )
 
     # 創業計画書の9項目
     motivation = Column(Text, comment="1. 創業の動機")

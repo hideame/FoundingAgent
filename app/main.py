@@ -14,6 +14,7 @@ from openpyxl.utils import get_column_letter, range_boundaries
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import close_db, get_db, init_db
+from app.models import Session as SessionModel
 from app.services.gemini_service import GeminiService
 from app.store import session_store
 
@@ -393,6 +394,12 @@ async def start_chat(
     """
     session_id = str(uuid.uuid4())
 
+    # データベースにセッションレコードを作成
+    new_session = SessionModel(id=session_id)
+    db.add(new_session)
+    await db.commit()
+    print(f"[DEBUG] Created new session: {session_id}")
+
     initial_task_title = None
     if task_id:
         # TASKSからタイトルを検索
@@ -405,17 +412,83 @@ async def start_chat(
     # GeminiService.start_chat_session requires session_id
     tGreeting = await gemini_service.start_chat_session(session_id, initial_task_title)
 
+    # 業種選択マーカーの検出
+    industry_selector_html = ""
+    if "[[INDUSTRY_SELECTOR]]" in tGreeting:
+        tGreeting = tGreeting.replace("[[INDUSTRY_SELECTOR]]", "")
+        # 業種選択ボタンのHTMLを生成
+        industry_selector_html = templates.get_template(
+            "components/industry_selector.html"
+        ).render({"request": request})
+
+    # 完全なチャットインターフェースを返す（chat_interface.html テンプレートを使用）
     response = templates.TemplateResponse(
         "components/chat_interface.html",
         {
             "request": request,
             "message": tGreeting,
             "is_user": False,
+            "additional_content": industry_selector_html,  # 業種選択ボタンを追加コンテンツとして渡す
         },
     )
     # 簡易的にCookieでセッションIDを管理
     response.set_cookie(key="session_id", value=session_id)
     return response
+
+
+@app.post("/chat/select_industry", response_class=HTMLResponse)
+async def select_industry(
+    request: Request,
+    industry: str = Form(...),
+    session_id: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    業種選択ボタンがクリックされた際の処理。
+
+    業種を保存し、AIの応答を含む完全なチャットインターフェースを返します。
+    """
+    if not session_id:
+        return HTMLResponse("Session not found", status_code=400)
+
+    # 業種タイプのマッピング
+    industry_mapping = {
+        "1": "restaurant",
+        "2": "beauty",
+        "3": "car_sales",
+        "4": "apparel",
+        "5": "software",
+        "6": "construction",
+        "7": "cram_school",
+        "8": "dentist",
+        "9": "care_service",
+    }
+
+    industry_type = industry_mapping.get(industry)
+    if not industry_type:
+        return HTMLResponse("Invalid industry selection", status_code=400)
+
+    # データベースに業種タイプを保存
+    await session_store.update_industry_type(db, session_id, industry_type)
+    print(f"[DEBUG] Industry type set to: {industry_type}")
+
+    # AIに業種選択を伝える
+    ai_response_text = await gemini_service.generate_response(session_id, industry)
+
+    # チャット履歴を保存
+    history_data = gemini_service.get_chat_history(session_id)
+    await session_store.save_session(db, session_id, [], history_data)
+
+    # 完全なチャットインターフェースを返す
+    return templates.TemplateResponse(
+        "components/chat_interface.html",
+        {
+            "request": request,
+            "message": ai_response_text,
+            "is_user": False,
+            "show_industry_selection": f"{industry}",  # 選択された業種番号をユーザーメッセージとして表示
+        },
+    )
 
 
 @app.post("/chat/message", response_class=HTMLResponse)
@@ -460,9 +533,38 @@ async def chat_message(
 
     print(f"[DEBUG] AI Response preview: {ai_response_text[:200]}")
 
+    # 業種選択の検出と処理
+    industry_mapping = {
+        "1": "restaurant",
+        "2": "beauty",
+        "3": "car_sales",
+        "4": "apparel",
+        "5": "software",
+        "6": "construction",
+        "7": "cram_school",
+        "8": "dentist",
+        "9": "care_service",
+    }
+
+    # ユーザーメッセージから業種番号を検出
+    user_message_stripped = user_message.strip()
+    if user_message_stripped in industry_mapping:
+        industry_type = industry_mapping[user_message_stripped]
+        await session_store.update_industry_type(db, session_id, industry_type)
+        print(f"[DEBUG] Industry type set to: {industry_type}")
+
     # タスク完了マーカーの検出と処理
     task_update_html = ""
     draft_buttons_html = ""
+    industry_selector_html = ""
+
+    # 業種選択マーカーの検出
+    if "[[INDUSTRY_SELECTOR]]" in ai_response_text:
+        ai_response_text = ai_response_text.replace("[[INDUSTRY_SELECTOR]]", "")
+        # 業種選択ボタンのHTMLを生成
+        industry_selector_html = templates.get_template(
+            "components/industry_selector.html"
+        ).render({"request": request})
 
     # ドラフト提示マーカーの検出
     if "[[DRAFT_PROPOSED]]" in ai_response_text:
@@ -474,7 +576,7 @@ async def chat_message(
                     hx-target="#chat-history"
                     hx-swap="beforeend"
                     class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 font-bold transition-colors">
-                OK（次の項目へ）
+                OK(次の項目へ)
             </button>
             <button hx-post="/chat/message"
                     hx-vals='{"user_message": "文面を修正したいです"}'
@@ -600,7 +702,11 @@ async def chat_message(
     )
 
     response = HTMLResponse(
-        content=user_msg_html + ai_msg_html + draft_buttons_html + task_update_html
+        content=user_msg_html
+        + ai_msg_html
+        + industry_selector_html
+        + draft_buttons_html
+        + task_update_html
     )
 
     # セッションIDを再設定（有効期限延長などの効果もあるが、とりあえず念の為）
@@ -617,7 +723,22 @@ async def chat_message(
     return response
 
 
-@app.get("/plan/edit", response_class=HTMLResponse)
+@app.get(
+    "/plan/edit",
+    response_class=HTMLResponse,
+    summary="計画書編集画面の取得",
+    description="""
+    創業計画書の編集画面（エディタ）を取得します。
+
+    ⚠️ **Swagger UIでの直接テストはできません**
+    - このエンドポイントはCookieによるセッション管理が必要です
+    - Swagger UIではCookieパラメータを正しく送信できません
+
+    **テスト方法:**
+    - 下記の「Try it out」→「session_id」を入力→「Execute」で表示されるCurlコマンドをコピー
+    - ターミナルで実行
+    """,
+)
 async def edit_plan(
     request: Request,
     session_id: str | None = Cookie(default=None),
@@ -673,7 +794,22 @@ async def edit_plan(
     )
 
 
-@app.post("/plan/save", response_class=HTMLResponse)
+@app.post(
+    "/plan/save",
+    response_class=HTMLResponse,
+    summary="計画書の保存",
+    description="""
+    編集された創業計画書テキストを保存します。
+
+    ⚠️ **Swagger UIでの直接テストはできません**
+    - このエンドポイントはCookieによるセッション管理が必要です
+    - Swagger UIではCookieパラメータを正しく送信できません
+
+    **テスト方法:**
+    - 下記の「Try it out」→各フィールドと「session_id」を入力→「Execute」で表示されるCurlコマンドをコピー
+    - ターミナルで実行
+    """,
+)
 async def save_plan(
     request: Request,
     motivation: str = Form(default=""),
@@ -770,7 +906,22 @@ async def save_plan(
     )
 
 
-@app.post("/plan/generate", response_class=HTMLResponse)
+@app.post(
+    "/plan/generate",
+    response_class=HTMLResponse,
+    summary="計画書のドラフト生成",
+    description="""
+    これまでのチャット内容を元に、創業計画書のドラフトを生成します。
+
+    ⚠️ **Swagger UIでの直接テストはできません**
+    - このエンドポイントはCookieによるセッション管理が必要です
+    - Swagger UIではCookieパラメータを正しく送信できません
+
+    **テスト方法:**
+    - 下記の「Try it out」→「session_id」を入力→「Execute」で表示されるCurlコマンドをコピー
+    - ターミナルで実行
+    """,
+)
 async def generate_plan(
     request: Request,
     session_id: str | None = Cookie(default=None),
@@ -798,6 +949,19 @@ async def generate_plan(
             status_code=400,
         )
 
+    # データベースからセッションデータをロードし、チャット履歴を復元
+    current_data = await session_store.load_session(db, session_id)
+    if not current_data:
+        return HTMLResponse(
+            '<div class="flex items-center justify-center h-full text-red-500">セッションデータが見つかりません。最初からやり直してください。</div>',
+            status_code=400,
+        )
+
+    # チャット履歴をGeminiServiceに復元
+    history = current_data.get("chat_history", [])
+    if history:
+        gemini_service.restore_chat_session(session_id, history)
+
     # Geminiでドラフト生成
     plan_text = await gemini_service.generate_business_plan(session_id)
 
@@ -806,7 +970,7 @@ async def generate_plan(
     plan_text = re.sub(r"\[\[COMPLETED:[a-z_]+\]\]", "", plan_text)
 
     # --- 既存のセクションデータを取得 ---
-    current_data = await session_store.load_session(db, session_id)
+    # 注: current_data は既に上でロード済み
     existing_sections = {}
     if current_data and current_data.get("sections"):
         existing_sections = current_data["sections"]
@@ -882,7 +1046,29 @@ async def generate_plan(
     )
 
 
-@app.get("/plan/download_excel")
+@app.get(
+    "/plan/download_excel",
+    summary="計画書のExcelダウンロード",
+    description="""
+    作成完了した創業計画書をExcel形式でZIP圧縮してダウンロードします。
+
+    ⚠️ **Swagger UIでの直接テストはできません**
+    - このエンドポイントはCookieによるセッション管理が必要です
+    - Swagger UIではCookieパラメータを正しく送信できません
+
+    **テスト方法1: curlでファイル保存（推奨）**
+    ```bash
+    curl -X 'GET' \\
+      'http://localhost:8000/plan/download_excel' \\
+      -H 'Cookie: session_id=あなたのセッションID' \\
+      -o 創業計画書.zip
+    ```
+
+    **テスト方法2: ブラウザで直接アクセス（最も簡単）**
+    - ブラウザで `http://localhost:8000/plan/download_excel` を開く
+    - 自動的にダウンロードが開始されます
+    """,
+)
 async def download_plan_excel(
     session_id: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_db),
@@ -1049,8 +1235,6 @@ async def download_plan_excel(
                     line = line.lstrip("・-− ")
 
                     # 年月部分を抽出（例: "平成XX年3月" または "20XX年X月"）
-                    import re
-
                     year_month_match = re.match(
                         r"^([0-9]{4}年[0-9]{1,2}月|[平成令和昭和]+[0-9元]{1,2}年[0-9]{1,2}月)",
                         line,
@@ -1103,47 +1287,37 @@ async def download_plan_excel(
     workbook.save(excel_output)
     excel_output.seek(0)
 
-    # 業種判定とPDF選択（全セクションの内容を結合して判定）
-    all_content = " ".join([str(v) for v in sections.values() if v])
+    # 業種判定とPDF選択
     examples_dir = BASE_DIR / "static" / "templates" / "examples"
     pdf_filename = None
 
-    # 業種キーワードマッチング
-    if re.search(
-        r"飲食|居酒屋|カフェ|レストラン|食堂|ランチ|ディナー|料理", all_content
-    ):
-        pdf_filename = "restaurant_example.pdf"
-    elif re.search(r"美容|サロン|ヘア|ネイル|エステ|カット|パーマ", all_content):
-        pdf_filename = "beauty_example.pdf"
-    elif re.search(r"自動車|中古車|車両|整備|板金|ガソリン", all_content):
-        pdf_filename = "car_sales_example.pdf"
-    elif re.search(
-        r"アパレル|洋服|服飾|衣料|婦人服|子供服|ベビー服|ファッション|ブティック",
-        all_content,
-    ):
-        pdf_filename = "apparel_example.pdf"
-    elif re.search(
-        r"内装|工事|建築|リフォーム|リノベーション|施工|塗装|配管|電気工事", all_content
-    ):
-        pdf_filename = "construction_example.pdf"
-    elif re.search(
-        r"学習塾|塾|予備校|個別指導|教室|スクール|講師|生徒|授業|受験", all_content
-    ):
-        pdf_filename = "cram_school_example.pdf"
-    elif re.search(
-        r"歯科|歯医者|デンタル|クリニック|矯正|インプラント|衛生士", all_content
-    ):
-        pdf_filename = "dentist_example.pdf"
-    elif re.search(
-        r"介護|デイサービス|福祉|ヘルパー|ケアマネ|老人|高齢者|リハビリ|支援",
-        all_content,
-    ):
-        pdf_filename = "care_service_example.pdf"
-    elif re.search(
-        r"ソフトウェア|システム|アプリ|開発|IT|Web|ウェブ|エンジニア|プログラミング",
-        all_content,
-    ):
-        pdf_filename = "software_example.pdf"
+    # 業種タイプ→PDFファイルのマッピング
+    industry_pdf_map = {
+        "software": "software_example.pdf",
+        "restaurant": "restaurant_example.pdf",
+        "beauty": "beauty_example.pdf",
+        "apparel": "apparel_example.pdf",
+        "construction": "construction_example.pdf",
+        "cram_school": "cram_school_example.pdf",
+        "care_service": "care_service_example.pdf",
+        "car_sales": "car_sales_example.pdf",
+        "dentist": "dentist_example.pdf",
+    }
+
+    # セッションに保存された業種タイプを取得
+    industry_type = data.get("industry_type")
+    if industry_type and industry_type in industry_pdf_map:
+        pdf_filename = industry_pdf_map[industry_type]
+        print(
+            f"[DEBUG] Using industry type from session: {industry_type} -> {pdf_filename}"
+        )
+    else:
+        # 業種タイプが保存されていない場合はエラー
+        print(
+            "[WARNING] Industry type not found in session. User may have skipped selection."
+        )
+        # デフォルトのPDFを使用しない（業種選択は必須）
+        pdf_filename = None
 
     # ZIPファイルの作成
     zip_output = BytesIO()
@@ -1180,7 +1354,22 @@ async def download_plan_excel(
     )
 
 
-@app.post("/reset", response_class=HTMLResponse)
+@app.post(
+    "/reset",
+    response_class=HTMLResponse,
+    summary="セッションのリセット",
+    description="""
+    現在のセッションを完全にリセットし、初期状態に戻します。
+
+    ⚠️ **Swagger UIでの直接テストはできません**
+    - このエンドポイントはCookieによるセッション管理が必要です
+    - Swagger UIではCookieパラメータを正しく送信できません
+
+    **テスト方法:**
+    - 下記の「Try it out」→「session_id」を入力→「Execute」で表示されるCurlコマンドをコピー
+    - ターミナルで実行
+    """,
+)
 async def reset_session(
     request: Request,
     session_id: str | None = Cookie(default=None),

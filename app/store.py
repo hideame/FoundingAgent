@@ -213,10 +213,16 @@ class SessionStore:
                 f"[DEBUG] load_session - Returning {len([k for k, v in sections.items() if v])} sections with content"
             )
 
+            # 業種タイプをbusiness_planから取得
+            industry_type = None
+            if session.business_plan:
+                industry_type = session.business_plan.industry_type
+
             return {
                 "task_states": task_states_dict,  # {"task_id": "done"/"pending"}
                 "chat_history": chat_history,
                 "sections": sections,
+                "industry_type": industry_type,  # 業種タイプを追加
             }
 
         except Exception as e:
@@ -281,6 +287,47 @@ class SessionStore:
         except Exception as e:
             await db.rollback()
             print(f"Failed to update business plan sections for {session_id}: {e}")
+            raise
+
+    async def update_industry_type(
+        self, db: AsyncSession, session_id: str, industry_type: str
+    ):
+        """
+        事業計画の業種タイプを更新します。
+        business_plansレコードが存在しない場合は新規作成します。
+
+        Args:
+            db (AsyncSession): データベースセッション
+            session_id (str): セッションID
+            industry_type (str): 業種タイプ（software, restaurant, beauty等）
+        """
+        try:
+            # business_plansレコードを取得または作成
+            result = await db.execute(
+                select(BusinessPlan).where(BusinessPlan.session_id == session_id)
+            )
+            business_plan = result.scalar_one_or_none()
+
+            if business_plan:
+                # 既存レコードを更新
+                business_plan.industry_type = industry_type
+                business_plan.updated_at = datetime.utcnow()
+            else:
+                # 新規レコードを作成
+                business_plan = BusinessPlan(
+                    session_id=session_id,
+                    industry_type=industry_type,
+                )
+                db.add(business_plan)
+
+            await db.commit()
+            print(
+                f"[DEBUG] Updated industry_type to '{industry_type}' for session {session_id}"
+            )
+
+        except Exception as e:
+            await db.rollback()
+            print(f"Failed to update industry type for {session_id}: {e}")
             raise
 
 

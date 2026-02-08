@@ -1,0 +1,77 @@
+<div class="industry-selector mb-6">
+    <p class="text-gray-700 mb-4">以下の業種から、最も近いものを選択してください：</p>
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <button hx-post="/chat/select_industry"
+                hx-vals='{"industry": "1"}'
+                hx-target="#workspace-area"
+                hx-swap="innerHTML"
+                class="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg text-sm hover:border-blue-600 hover:bg-blue-50 transition-all text-left">
+            <span class="font-bold text-blue-600">1.</span> 飲食店
+            <span class="block text-xs text-gray-500 mt-1">カフェ、レストラン、居酒屋等</span>
+        </button>
+        <button hx-post="/chat/select_industry"
+                hx-vals='{"industry": "2"}'
+                hx-target="#workspace-area"
+                hx-swap="innerHTML"
+                class="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg text-sm hover:border-blue-600 hover:bg-blue-50 transition-all text-left">
+            <span class="font-bold text-blue-600">2.</span> 美容業
+            <span class="block text-xs text-gray-500 mt-1">美容室、ネイルサロン、エステ等</span>
+        </button>
+        <button hx-post="/chat/select_industry"
+                hx-vals='{"industry": "3"}'
+                hx-target="#workspace-area"
+                hx-swap="innerHTML"
+                class="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg text-sm hover:border-blue-600 hover:bg-blue-50 transition-all text-left">
+            <span class="font-bold text-blue-600">3.</span> 自動車関連
+            <span class="block text-xs text-gray-500 mt-1">中古車販売、整備等</span>
+        </button>
+        <button hx-post="/chat/select_industry"
+                hx-vals='{"industry": "4"}'
+                hx-target="#workspace-area"
+                hx-swap="innerHTML"
+                class="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg text-sm hover:border-blue-600 hover:bg-blue-50 transition-all text-left">
+            <span class="font-bold text-blue-600">4.</span> 小売業
+            <span class="block text-xs text-gray-500 mt-1">アパレル、雑貨店等</span>
+        </button>
+        <button hx-post="/chat/select_industry"
+                hx-vals='{"industry": "5"}'
+                hx-target="#workspace-area"
+                hx-swap="innerHTML"
+                class="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg text-sm hover:border-blue-600 hover:bg-blue-50 transition-all text-left">
+            <span class="font-bold text-blue-600">5.</span> ソフトウェア開発・ITサービス
+            <span class="block text-xs text-gray-500 mt-1">Webサービス、アプリ開発等</span>
+        </button>
+        <button hx-post="/chat/select_industry"
+                hx-vals='{"industry": "6"}'
+                hx-target="#workspace-area"
+                hx-swap="innerHTML"
+                class="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg text-sm hover:border-blue-600 hover:bg-blue-50 transition-all text-left">
+            <span class="font-bold text-blue-600">6.</span> 建設・工事業
+            <span class="block text-xs text-gray-500 mt-1">内装工事、リフォーム等</span>
+        </button>
+        <button hx-post="/chat/select_industry"
+                hx-vals='{"industry": "7"}'
+                hx-target="#workspace-area"
+                hx-swap="innerHTML"
+                class="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg text-sm hover:border-blue-600 hover:bg-blue-50 transition-all text-left">
+            <span class="font-bold text-blue-600">7.</span> 教育サービス
+            <span class="block text-xs text-gray-500 mt-1">学習塾、スクール等</span>
+        </button>
+        <button hx-post="/chat/select_industry"
+                hx-vals='{"industry": "8"}'
+                hx-target="#workspace-area"
+                hx-swap="innerHTML"
+                class="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg text-sm hover:border-blue-600 hover:bg-blue-50 transition-all text-left">
+            <span class="font-bold text-blue-600">8.</span> 歯科診療所
+            <span class="block text-xs text-gray-500 mt-1">歯科医院、デンタルクリニック等</span>
+        </button>
+        <button hx-post="/chat/select_industry"
+                hx-vals='{"industry": "9"}'
+                hx-target="#workspace-area"
+                hx-swap="innerHTML"
+                class="px-4 py-3 bg-white border-2 border-gray-300 text-gray-700 rounded-lg text-sm hover:border-blue-600 hover:bg-blue-50 transition-all text-left">
+            <span class="font-bold text-blue-600">9.</span> 介護サービス
+            <span class="block text-xs text-gray-500 mt-1">デイサービス、訪問介護等</span>
+        </button>
+    </div>
+</div>

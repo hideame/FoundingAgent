@@ -26,8 +26,7 @@
         <span class="ml-4 px-2 py-1 bg-blue-100 text-blue-800 text-xs rounded-full">Prototyping</span>
       </div>
       <div class="flex items-center gap-6">
-        <button hx-post="/reset"
-                hx-confirm="これまでのすべてのデータ（チャット履歴・タスク進捗）を削除して、最初からやり直しますか？"
+        <button onclick="showConfirmResetDialog()"
                 class="text-sm text-red-500 hover:text-red-700 underline font-medium cursor-pointer">
             最初からやり直す
         </button>
@@ -154,5 +153,8 @@
 
     </div>
   </main>
+
+  <!-- 確認ダイアログ -->
+  {% include "components/confirm_dialog.html" %}
 </body>
 </html>

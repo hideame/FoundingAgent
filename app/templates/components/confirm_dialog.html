@@ -1,0 +1,104 @@
+<!-- 確認ダイアログモーダル -->
+<div id="confirm-reset-dialog" class="hidden fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50 transition-opacity duration-300">
+  <div class="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white animate-modal-appear">
+    <div class="mt-3 text-center">
+      <!-- アイコン -->
+      <div class="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-red-100">
+        <svg class="h-6 w-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path>
+        </svg>
+      </div>
+
+      <!-- タイトル -->
+      <h3 class="text-lg leading-6 font-medium text-gray-900 mt-5">
+        最初からやり直しますか？
+      </h3>
+
+      <!-- メッセージ -->
+      <div class="mt-2 px-7 py-3">
+        <p class="text-sm text-gray-500">
+          これまでのすべてのデータが削除されます：
+        </p>
+        <ul class="mt-2 text-sm text-gray-600 text-left list-disc list-inside space-y-1">
+          <li>チャット履歴</li>
+          <li>タスク進捗状況</li>
+          <li>作成中の創業計画書</li>
+        </ul>
+        <p class="mt-3 text-sm font-semibold text-red-600">
+          ⚠️ この操作は取り消せません
+        </p>
+      </div>
+
+      <!-- ボタン -->
+      <div class="flex gap-3 px-4 py-3">
+        <button id="cancel-reset-btn"
+                class="flex-1 px-4 py-2 bg-white text-gray-700 text-base font-medium rounded-md border border-gray-300 hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-300 transition-colors">
+          キャンセル
+        </button>
+        <button hx-post="/reset"
+                hx-swap="none"
+                onclick="hideConfirmResetDialog()"
+                class="flex-1 px-4 py-2 bg-red-600 text-white text-base font-medium rounded-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 transition-colors">
+          削除してやり直す
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<style>
+  @keyframes modal-appear {
+    from {
+      opacity: 0;
+      transform: scale(0.95) translateY(-10px);
+    }
+    to {
+      opacity: 1;
+      transform: scale(1) translateY(0);
+    }
+  }
+
+  .animate-modal-appear {
+    animation: modal-appear 0.2s ease-out;
+  }
+</style>
+
+<script>
+  // ダイアログを表示する関数
+  function showConfirmResetDialog() {
+    const dialog = document.getElementById('confirm-reset-dialog');
+    dialog.classList.remove('hidden');
+    // フォーカストラップのため、最初のボタンにフォーカス
+    setTimeout(() => {
+      document.getElementById('cancel-reset-btn')?.focus();
+    }, 100);
+  }
+
+  // ダイアログを非表示にする関数
+  function hideConfirmResetDialog() {
+    document.getElementById('confirm-reset-dialog').classList.add('hidden');
+  }
+
+  // ページロード時にイベントリスナーを設定
+  document.addEventListener('DOMContentLoaded', function() {
+    // キャンセルボタンのクリックイベント
+    document.getElementById('cancel-reset-btn')?.addEventListener('click', hideConfirmResetDialog);
+
+    // 背景クリックで閉じる
+    document.getElementById('confirm-reset-dialog')?.addEventListener('click', function(e) {
+      if (e.target === this) {
+        hideConfirmResetDialog();
+      }
+    });
+
+    // Escキーで閉じる
+    document.addEventListener('keydown', function(e) {
+      if (e.key === 'Escape') {
+        const dialog = document.getElementById('confirm-reset-dialog');
+        if (!dialog.classList.contains('hidden')) {
+          hideConfirmResetDialog();
+        }
+      }
+    });
+  });
+</script>
