@@ -14,14 +14,50 @@
 
 - **Backend**: FastAPI (Python 3.12)
 - **Database**: MySQL 8.0 + SQLAlchemy (非同期ORM)
-- **AI**: Google Gemini API
+- **AI**: Google Gemini API via **Vertex AI**
 - **Frontend**: Jinja2 Templates + HTML/CSS/JavaScript
 - **Excel**: openpyxl
 - **Testing**: pytest
+- **Cloud**: Google Cloud Platform (Vertex AI)
 
 ## セットアップ
 
-### 1. 環境変数の設定
+### 1. Google Cloud / Vertex AI のセットアップ
+
+このプロジェクトは **Vertex AI** を使用してGemini APIにアクセスします。
+
+#### 1.1 Google Cloud プロジェクトの作成
+
+1. [Google Cloud Console](https://console.cloud.google.com/) にアクセス
+2. 新しいプロジェクトを作成（または既存のプロジェクトを使用）
+3. プロジェクトIDをメモしておく
+
+#### 1.2 Vertex AI APIの有効化
+
+```bash
+# Google Cloud CLIをインストール（未インストールの場合）
+# https://cloud.google.com/sdk/docs/install
+
+# 認証
+gcloud auth login
+
+# プロジェクトを設定
+gcloud config set project YOUR_PROJECT_ID
+
+# Vertex AI APIを有効化
+gcloud services enable aiplatform.googleapis.com
+```
+
+#### 1.3 Application Default Credentials (ADC) の設定
+
+```bash
+# ローカル開発用の認証情報を設定
+gcloud auth application-default login
+```
+
+ブラウザが開くので、Google アカウントでログインしてください。
+
+#### 1.4 環境変数の設定
 
 `.env.example`を`.env`にコピーして、必要な値を設定します：
 
@@ -32,8 +68,9 @@ cp .env.example .env
 `.env`ファイルを編集：
 
 ```env
-# Google Gemini API Key（必須）
-GOOGLE_API_KEY=your_actual_google_api_key_here
+# Google Cloud / Vertex AI（必須）
+GOOGLE_CLOUD_PROJECT=your-project-id-here
+GOOGLE_CLOUD_LOCATION=us-central1
 
 # データベース接続URL
 DATABASE_URL=mysql+aiomysql://founding_user:founding_pass@localhost:3306/founding_agent
@@ -41,6 +78,10 @@ DATABASE_URL=mysql+aiomysql://founding_user:founding_pass@localhost:3306/foundin
 # デバッグモード
 DEBUG=True
 ```
+
+**注意:**
+- `GOOGLE_CLOUD_PROJECT`: 1.1で作成したプロジェクトID
+- `GOOGLE_CLOUD_LOCATION`: リージョン（デフォルトは `us-central1`、東京リージョンは `asia-northeast1`）
 
 ### 2. MySQLデータベースの起動
 
@@ -78,6 +119,48 @@ uvicorn app.main:app --reload
 ```
 
 ブラウザで `http://localhost:8000` にアクセスしてください。
+
+## API ドキュメント（Swagger UI）
+
+FastAPIには自動生成されるAPI ドキュメントが組み込まれています。
+
+### Swagger UI（インタラクティブなAPI ドキュメント）
+
+アプリケーション起動後、以下のURLにアクセスしてください：
+
+```
+http://localhost:8000/docs
+```
+
+**主な機能:**
+- 📋 全APIエンドポイントの一覧表示
+- 🔍 各エンドポイントのリクエスト/レスポンススキーマ確認
+- 🧪 ブラウザから直接APIをテスト（Try it out機能）
+- 📥 リクエストボディのサンプル表示
+- 📤 レスポンスの例とステータスコード
+
+### ReDoc（読みやすいAPI ドキュメント）
+
+より読みやすいドキュメント形式が必要な場合：
+
+```
+http://localhost:8000/redoc
+```
+
+**特徴:**
+- 📖 3カラムレイアウトで見やすい
+- 🔎 検索機能付き
+- 📋 エンドポイントのグループ化表示
+
+### OpenAPI スキーマ（JSON）
+
+APIスキーマを直接取得する場合：
+
+```
+http://localhost:8000/openapi.json
+```
+
+このJSONファイルは、Postmanなどの外部ツールへのインポートにも使用できます。
 
 ## データベース管理
 
@@ -125,15 +208,37 @@ pytest -v
 pytest tests/test_excel_export.py -v
 ```
 
-## ドキュメント生成
+## ドキュメント
+
+このプロジェクトには2種類のドキュメントがあります：
+
+### 1. API ドキュメント（Swagger UI / ReDoc）
+
+**用途**: REST APIエンドポイントの仕様確認とテスト
+
+- **Swagger UI**: `http://localhost:8000/docs`（インタラクティブ）
+- **ReDoc**: `http://localhost:8000/redoc`（読みやすい）
+- **OpenAPI JSON**: `http://localhost:8000/openapi.json`（スキーマファイル）
+
+FastAPIが自動生成するため、追加の設定は不要です。
+
+### 2. コードドキュメント（pdoc）
+
+**用途**: Pythonコードの内部実装、クラス、関数の詳細説明
 
 ```bash
-# APIドキュメントを生成（pdoc使用）
+# コードドキュメントを生成（静的HTML）
 pdoc app -o docs
 
-# ドキュメントをブラウザでプレビュー
+# ドキュメントをブラウザでプレビュー（開発サーバー起動）
 pdoc app
 ```
+
+生成されたHTMLは `docs/` ディレクトリに保存されます。
+
+> **💡 使い分け**:
+> - **API利用者向け** → Swagger UI / ReDoc
+> - **開発者向け（コード理解）** → pdoc
 
 ## プロジェクト構成
 
@@ -178,6 +283,56 @@ FoundingAgent/
 - SQLAlchemyの非同期APIを使用
 
 ## トラブルシューティング
+
+### Vertex AI / Gemini APIのエラー
+
+#### 「チャットの開始に失敗しました」と表示される
+
+**原因:** Vertex AIの認証情報が設定されていない、またはAPIが有効化されていない
+
+**解決方法:**
+
+1. **環境変数の確認**
+   ```bash
+   # .envファイルを確認
+   cat .env
+
+   # 以下が設定されているか確認
+   # GOOGLE_CLOUD_PROJECT=your-project-id
+   # GOOGLE_CLOUD_LOCATION=us-central1
+   ```
+
+2. **Application Default Credentials (ADC) の設定**
+   ```bash
+   # 認証情報を設定
+   gcloud auth application-default login
+
+   # 認証状態を確認
+   gcloud auth application-default print-access-token
+   ```
+
+3. **Vertex AI APIの有効化確認**
+   ```bash
+   # APIが有効化されているか確認
+   gcloud services list --enabled | grep aiplatform
+
+   # 有効化されていない場合
+   gcloud services enable aiplatform.googleapis.com
+   ```
+
+4. **プロジェクトIDの確認**
+   ```bash
+   # 現在のプロジェクトを確認
+   gcloud config get-value project
+
+   # プロジェクト一覧を表示
+   gcloud projects list
+   ```
+
+#### Google Cloud の無料枠について
+
+- 新規ユーザーは **$300の無料クレジット**（90日間有効）
+- 詳細: https://cloud.google.com/free/docs/gcp-free-tier/#free-trial
 
 ### MySQLに接続できない
 

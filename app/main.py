@@ -36,7 +36,30 @@ FastAPIを使用したWebサーバーとして機能し、以下の役割を担�
 # Load environment variables first
 load_dotenv()
 
-app = FastAPI(title="Founder's Pilot")
+app = FastAPI(
+    title="Founder's Pilot",
+    description="""
+    ## 創業計画書作成支援アプリケーション
+
+    AIエージェントとの対話を通じて、創業計画書を作成するためのWebアプリケーションです。
+
+    ### 主な機能
+    - **AIチャット**: Gemini APIを使用した対話型ヒアリング
+    - **計画書作成**: 10項目の創業計画書を段階的に作成
+    - **編集機能**: 作成した計画書の編集・保存
+    - **Excelエクスポート**: 日本政策金融公庫のテンプレート形式でダウンロード
+    - **記入例提供**: 業種別の記入例PDFを自動選択して提供
+
+    ### エンドポイント
+    - `/`: ダッシュボード（HTMLページ）
+    - `/chat/*`: チャット機能（AIとの対話）
+    - `/plan/*`: 計画書の編集・保存・生成・ダウンロード
+    """,
+    version="1.0.0",
+    contact={
+        "name": "Founder's Pilot Support",
+    },
+)
 
 
 # アプリケーション起動時の処理
@@ -483,12 +506,52 @@ async def chat_message(
         f"[DEBUG] Loaded tasks: {[t['id'] + ':' + t['status'] for t in current_tasks]}"
     )
 
+    # タスク完了マーカーの検出（マーカー削除前に）
     match = re.search(r"\[\[COMPLETED:([a-z_]+)\]\]", ai_response_text)
+    completed_task_id = None
+    section_content = None
+
     if match:
         completed_task_id = match.group(1)
         print(f"[DEBUG] Found COMPLETED marker for task: {completed_task_id}")
-        # マーカーを応答テキストから削除
-        ai_response_text = ai_response_text.replace(match.group(0), "")
+
+        # --- セクション内容の抽出（マーカー削除前に実行）---
+        print(
+            f"[DEBUG] AI response for extraction (before cleanup): {ai_response_text[:500]}"
+        )
+        section_content = extract_single_section_from_response(
+            ai_response_text, completed_task_id
+        )
+
+        if section_content:
+            print(f"[DEBUG] ✓ Extracted section content for {completed_task_id}:")
+            print(f"[DEBUG]   Length: {len(section_content)} chars")
+            print(f"[DEBUG]   Preview: {section_content[:100]}...")
+        else:
+            print(
+                f"[WARNING] ✗ Could not extract section content for {completed_task_id}"
+            )
+
+    # コンテンツマーカーを削除（表示用）
+    ai_response_text = ai_response_text.replace("[[CONTENT_START]]", "")
+    ai_response_text = ai_response_text.replace("[[CONTENT_END]]", "")
+
+    # デバッグ: 改行の状況を確認
+    print(f"[DEBUG] Before cleanup - response preview: {repr(ai_response_text[:300])}")
+
+    if match:
+        print(f"[DEBUG] Found COMPLETED marker for task: {completed_task_id}")
+        # マーカーとその前後の改行を削除（\n\n[[COMPLETED:xxx]]\n\n -> \n\n に）
+        ai_response_text = re.sub(
+            r"\n*\[\[COMPLETED:[a-z_]+\]\]\n*", "\n\n", ai_response_text
+        )
+
+        # 過剰な改行を整理（3つ以上の連続する改行を2つに）
+        ai_response_text = re.sub(r"\n{3,}", "\n\n", ai_response_text)
+
+        print(
+            f"[DEBUG] After cleanup - response preview: {repr(ai_response_text[:300])}"
+        )
 
         # タスクステータスの更新（セッション内のタスクリストを更新）
         for task in current_tasks:
@@ -510,20 +573,8 @@ async def chat_message(
                     f"[DEBUG] Generated OOB HTML for checkbox: task-{completed_task_id}"
                 )
 
-                # --- セクション内容の抽出と保存 ---
-                # AI応答から該当セクションの内容を抽出
-                print(f"[DEBUG] AI response for extraction: {ai_response_text[:500]}")
-                section_content = extract_single_section_from_response(
-                    ai_response_text, completed_task_id
-                )
-
+                # --- セクション内容の保存 ---
                 if section_content:
-                    print(
-                        f"[DEBUG] ✓ Extracted section content for {completed_task_id}:"
-                    )
-                    print(f"[DEBUG]   Length: {len(section_content)} chars")
-                    print(f"[DEBUG]   Preview: {section_content[:100]}...")
-
                     # 該当セクションのみをデータベースに保存
                     section_update = {completed_task_id: section_content}
 
@@ -539,9 +590,8 @@ async def chat_message(
                     print(f"[DEBUG] ✓ Saved section {completed_task_id} to database")
                 else:
                     print(
-                        f"[WARNING] ✗ Could not extract section content for {completed_task_id}"
+                        f"[WARNING] ✗ No section content to save for {completed_task_id}"
                     )
-                    print(f"[WARNING]   AI response was: {ai_response_text[:300]}")
 
                 break
 
@@ -755,11 +805,46 @@ async def generate_plan(
     plan_text = re.sub(r"\[\[DRAFT_PROPOSED\]\]", "", plan_text)
     plan_text = re.sub(r"\[\[COMPLETED:[a-z_]+\]\]", "", plan_text)
 
+    # --- 既存のセクションデータを取得 ---
+    current_data = await session_store.load_session(db, session_id)
+    existing_sections = {}
+    if current_data and current_data.get("sections"):
+        existing_sections = current_data["sections"]
+        print(
+            f"[DEBUG] /plan/generate - Found existing sections: {list(existing_sections.keys())}"
+        )
+        print(
+            f"[DEBUG] /plan/generate - Sections with data: {[k for k, v in existing_sections.items() if v]}"
+        )
+
     # 全文テキストをセクション別に分割
-    sections = extract_sections_from_text(plan_text)
+    new_sections = extract_sections_from_text(plan_text)
+
+    # 既存のセクションデータと新規生成データをマージ（既存データを優先）
+    sections = {}
+    for key in [
+        "motivation",
+        "background",
+        "service",
+        "employees",
+        "partners",
+        "related_companies",
+        "loans",
+        "funds",
+        "outlook",
+        "free_description",
+    ]:
+        # 既存データがあればそれを使用、なければ新規生成データを使用
+        if existing_sections.get(key):
+            sections[key] = existing_sections[key]
+            print(f"[DEBUG] /plan/generate - Using existing data for {key}")
+        elif new_sections.get(key):
+            sections[key] = new_sections[key]
+            print(f"[DEBUG] /plan/generate - Using new generated data for {key}")
+        else:
+            sections[key] = None
 
     # --- 生成されたプランの保存 ---
-    current_data = await session_store.load_session(db, session_id)
     if current_data:
         # タスク状態をTASKS形式に変換
         task_states = current_data.get("task_states", {})
@@ -900,18 +985,118 @@ async def download_plan_excel(
         if not mapping.get(key):
             mapping[key] = addr
 
+    # 特定のセルを手動で上書き（動的検出が正しくない場合）
+    mapping["background"] = "H13"  # 経営者の略歴等
+
     # データベースから取得したセクションデータをExcelに転記
+    print("[DEBUG] Starting Excel data export...")
+    print(f"[DEBUG] Sections to export: {list(sections.keys())}")
+    print(f"[DEBUG] Sections with content: {[k for k, v in sections.items() if v]}")
+
     for key, content in sections.items():
         if content:
+            # 「創業の動機」は特殊処理（60文字ごとに分割してB7～B12に転記）
+            if key == "motivation":
+                print(
+                    "[DEBUG] Processing motivation (創業の動機) with 60-char splitting..."
+                )
+                # 改行を削除して1つの文字列にする
+                text = content.replace("\n", "")
+                print(f"[DEBUG] Total length: {len(text)} chars")
+
+                # 60文字ごとに分割（最大6行）
+                max_rows = 6
+                char_limit = 60
+
+                for idx in range(max_rows):
+                    start_pos = idx * char_limit
+                    end_pos = start_pos + char_limit
+
+                    if start_pos >= len(text):
+                        break
+
+                    line_text = text[start_pos:end_pos]
+                    row_num = 7 + idx  # B7, B8, B9, B10, B11, B12
+
+                    sheet[f"B{row_num}"].value = line_text
+                    print(
+                        f"[DEBUG]   ✓ Wrote to B{row_num}: '{line_text[:40]}...' ({len(line_text)} chars)"
+                    )
+
+                print(
+                    f"[DEBUG] ✓ Successfully processed motivation in {min((len(text) + char_limit - 1) // char_limit, max_rows)} rows"
+                )
+                continue
+
+            # 「経営者の略歴等」は特殊処理（複数行に分割して転記）
+            if key == "background":
+                print(
+                    f"[DEBUG] Processing background (略歴) with special formatting..."
+                )
+                lines = content.strip().split("\n")
+                print(f"[DEBUG] Found {len(lines)} lines in background")
+
+                # 最大6行まで処理（B13/H13, B14/H14, B15/H15, B16/H16, B17/H17, B18/H18）
+                for idx, line in enumerate(lines[:6]):
+                    line = line.strip()
+                    if not line:
+                        continue
+
+                    row_num = 13 + idx  # 13, 14, 15, 16, 17, 18
+
+                    # 年月と内容を分離（例: "・平成XX年3月 〇〇大学工学部 卒業"）
+                    # 「・」や「-」で始まる場合は除去
+                    line = line.lstrip("・-− ")
+
+                    # 年月部分を抽出（例: "平成XX年3月" または "20XX年X月"）
+                    import re
+
+                    year_month_match = re.match(
+                        r"^([0-9]{4}年[0-9]{1,2}月|[平成令和昭和]+[0-9元]{1,2}年[0-9]{1,2}月)",
+                        line,
+                    )
+
+                    if year_month_match:
+                        year_month = year_month_match.group(1)
+                        content_text = line[len(year_month) :].strip()
+                    else:
+                        # 年月が見つからない場合は、全体を内容として扱う
+                        year_month = ""
+                        content_text = line
+
+                    # B列に年月、H列に内容を書き込み
+                    if year_month:
+                        sheet[f"B{row_num}"].value = year_month
+                        print(
+                            f"[DEBUG]   ✓ Wrote year/month to B{row_num}: '{year_month}'"
+                        )
+
+                    if content_text:
+                        sheet[f"H{row_num}"].value = content_text
+                        print(
+                            f"[DEBUG]   ✓ Wrote content to H{row_num}: '{content_text[:50]}...'"
+                        )
+
+                print(
+                    f"[DEBUG] ✓ Successfully processed background with {min(len(lines), 6)} rows"
+                )
+                continue
+
+            # その他のセクションは通常通り処理
             cell_addr = mapping.get(key)
             if cell_addr:
                 try:
                     sheet[cell_addr].value = content
                     print(
-                        f"[DEBUG] Successfully wrote '{content[:50]}...' to {cell_addr}"
+                        f"[DEBUG] ✓ Successfully wrote {key} ({len(content)} chars) to {cell_addr}"
                     )
+                    print(f"[DEBUG]   Preview: '{content[:80]}...'")
                 except Exception as e:
-                    print(f"[ERROR] Could not write to cell {cell_addr}: {e}")
+                    print(f"[ERROR] ✗ Could not write {key} to cell {cell_addr}: {e}")
+            else:
+                print(f"[WARNING] No cell mapping found for {key}")
+        else:
+            print(f"[DEBUG] Skipping {key} (no content)")
 
     # メモリ上のバイナリとして保存 (Excel)
     excel_output = BytesIO()
