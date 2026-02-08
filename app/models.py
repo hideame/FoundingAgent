@@ -72,7 +72,7 @@ class BusinessPlan(Base):
         comment="業種タイプ（software, restaurant, beauty等）",
     )
 
-    # 創業計画書の9項目
+    # 創業計画書の10項目
     motivation = Column(Text, comment="1. 創業の動機")
     background = Column(Text, comment="2. 経営者の略歴等")
     service = Column(Text, comment="3. 取扱商品・サービス")
@@ -97,6 +97,43 @@ class BusinessPlan(Base):
 
     # リレーション
     session = relationship("Session", back_populates="business_plan")
+
+
+class ExampleContent(Base):
+    """
+    業種別・項目別の記入例を管理するテーブル
+
+    各業種ごとに、創業計画書の各項目の記入例を格納します。
+    これにより、Geminiのプロンプトに依存せず、確実に正確な記入例を提供できます。
+    """
+
+    __tablename__ = "example_contents"
+
+    id = Column(Integer, primary_key=True, autoincrement=True, comment="記入例ID")
+    industry_type = Column(
+        String(50),
+        nullable=False,
+        comment="業種タイプ（software, restaurant, beauty等）",
+    )
+    section_key = Column(
+        String(50),
+        nullable=False,
+        comment="セクションキー（motivation, background, service等）",
+    )
+    example_text = Column(Text, nullable=False, comment="記入例の内容")
+    created_at = Column(
+        DateTime, default=datetime.utcnow, nullable=False, comment="作成日時"
+    )
+    updated_at = Column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        nullable=False,
+        comment="更新日時",
+    )
+
+    # 複合ユニーク制約（同じ業種・セクションの組み合わせは1つまで）
+    __table_args__ = ({"comment": "業種別・項目別の記入例マスターテーブル"},)
 
 
 class ChatMessage(Base):

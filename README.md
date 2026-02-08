@@ -340,10 +340,11 @@ FoundingAgent/
 # MySQLコンテナのログを確認
 docker-compose logs mysql
 
-# MySQLコンテナに直接接続
-docker-compose exec mysql mysql -u founding_user -p founding_agent
-# パスワード: founding_pass
+# MySQLコンテナに直接接続（文字化けを防ぐためにUTF-8を指定）
+docker-compose exec mysql mysql -u founding_user -pfounding_pass --default-character-set=utf8mb4 founding_agent
 ```
+
+**注意:** 本番環境では、セキュリティ上の理由から環境変数やシークレット管理を使用してください。
 
 ### データベーステーブルが作成されない
 
@@ -351,11 +352,20 @@ docker-compose exec mysql mysql -u founding_user -p founding_agent
 
 ```bash
 # MySQLコンテナに接続
-docker-compose exec mysql mysql -u founding_user -p founding_agent
+docker-compose exec mysql mysql -u founding_user -pfounding_pass founding_agent
 
 # テーブル一覧を確認
 SHOW TABLES;
 
 # テーブル構造を確認
 DESCRIBE business_plans;
+
+# example_contentsテーブルの確認（日本語データ）
+DESCRIBE example_contents;
+SELECT COUNT(*) FROM example_contents;
+
+# 特定の業種・セクションの記入例を確認
+SELECT industry_type, section_key, SUBSTRING(example_text, 1, 200) as preview
+FROM example_contents
+WHERE industry_type='software' AND section_key='motivation'\G
 ```

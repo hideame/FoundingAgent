@@ -1,17 +1,6 @@
 <div class="flex flex-col h-[600px] border rounded-lg bg-gray-50">
   <!-- Chat History -->
-  <div id="chat-history" class="flex-1 overflow-y-auto p-4 space-y-4 flex flex-col-reverse">
-    <!-- Scroll Anchor (最下部に自動スクロール) -->
-    <div id="chat-bottom"></div>
-
-    {% if additional_content %}
-    <!-- 追加コンテンツ（業種選択ボタンなど） -->
-    {{ additional_content | safe }}
-    {% endif %}
-
-    <!-- Initial Message -->
-    {% include "components/message.html" %}
-
+  <div id="chat-history" class="flex-1 overflow-y-auto p-4 space-y-4">
     {% if show_industry_selection %}
     <!-- ユーザーの業種選択を表示 -->
     <div class="flex justify-end">
@@ -20,13 +9,21 @@
       </div>
     </div>
     {% endif %}
+
+    <!-- Initial Message -->
+    {% include "components/message.html" %}
+
+    {% if additional_content %}
+    <!-- 追加コンテンツ（業種選択ボタンなど） -->
+    {{ additional_content | safe }}
+    {% endif %}
   </div>
 
   <!-- Input Area -->
   <div class="border-t bg-white p-4 rounded-b-lg">
     <form hx-post="/chat/message"
-          hx-target="#chat-bottom"
-          hx-swap="afterbegin"
+          hx-target="#chat-history"
+          hx-swap="beforeend"
           hx-on::after-request="this.reset()"
           class="flex gap-2">
       <textarea name="user_message"
@@ -44,3 +41,17 @@
     </div>
   </div>
 </div>
+
+<!-- Auto-scroll to bottom script -->
+<script>
+  (function() {
+    const chatHistory = document.getElementById('chat-history');
+    if (chatHistory && !chatHistory.dataset.observerInitialized) {
+      const observer = new MutationObserver(() => {
+        chatHistory.scrollTop = chatHistory.scrollHeight;
+      });
+      observer.observe(chatHistory, { childList: true });
+      chatHistory.dataset.observerInitialized = 'true';
+    }
+  })();
+</script>

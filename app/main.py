@@ -436,6 +436,164 @@ async def start_chat(
     return response
 
 
+@app.post("/chat/approve_draft", response_class=HTMLResponse)
+async def approve_draft(
+    request: Request,
+    task_id: str = Form(...),
+    session_id: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    ドラフト承認ボタン（OK）がクリックされた際の処理。
+
+    Geminiに依存せず、確実に次のステップに進みます。
+
+    処理フロー:
+    1. 直前のAI応答からドラフト内容を抽出
+    2. タスクを完了状態に更新
+    3. データベースに保存
+    4. 次のタスクの質問を生成
+    """
+    if not session_id:
+        return HTMLResponse("Session not found", status_code=400)
+
+    print(f"[DEBUG] /chat/approve_draft - task_id: {task_id}, session_id: {session_id}")
+
+    # セッションデータをロード
+    import copy
+
+    current_tasks = copy.deepcopy(TASKS)
+    session_data = await session_store.load_session(db, session_id)
+
+    if session_data and "task_states" in session_data:
+        task_states = session_data["task_states"]
+        current_tasks = []
+        for task in TASKS:
+            task_copy = task.copy()
+            if task["id"] in task_states:
+                task_copy["status"] = task_states[task["id"]]
+            current_tasks.append(task_copy)
+
+    # チャット履歴から直前のAI応答を取得
+    history_data = gemini_service.get_chat_history(session_id)
+    last_ai_response = None
+    if history_data:
+        # 最後のAIメッセージを探す
+        for msg in reversed(history_data):
+            if msg.get("role") == "model":
+                last_ai_response = msg.get("parts", [{}])[0].get("text", "")
+                break
+
+    print(
+        f"[DEBUG] Last AI response preview: {last_ai_response[:200] if last_ai_response else 'None'}"
+    )
+
+    # ドラフト内容を抽出
+    draft_content = None
+    if last_ai_response:
+        draft_content = extract_single_section_from_response(last_ai_response, task_id)
+
+    if not draft_content:
+        print(f"[WARNING] Could not extract draft content for task {task_id}")
+        # フォールバック: 直前のAI応答全体を使用
+        if last_ai_response:
+            # マーカーを除去して使用
+            draft_content = (
+                last_ai_response.replace("[[CONTENT_START]]", "")
+                .replace("[[CONTENT_END]]", "")
+                .replace("[[DRAFT_PROPOSED]]", "")
+                .strip()
+            )
+
+    # タスクを完了状態に更新
+    task_found = False
+    for task in current_tasks:
+        if task["id"] == task_id:
+            task["status"] = "done"
+            task_found = True
+            print(f"[DEBUG] Task {task_id} marked as done")
+            break
+
+    if not task_found:
+        print(f"[ERROR] Task {task_id} not found in task list")
+        return HTMLResponse("Invalid task ID", status_code=400)
+
+    # ドラフト内容をデータベースに保存
+    if draft_content:
+        section_update = {task_id: draft_content}
+        await session_store.save_session(
+            db,
+            session_id,
+            current_tasks,
+            history_data,
+            sections=section_update,
+        )
+        print(f"[DEBUG] Saved draft content for task {task_id}")
+
+    # 次のタスクを見つける
+    next_task = None
+    for i, task in enumerate(TASKS):
+        if task["id"] == task_id:
+            if i + 1 < len(TASKS):
+                next_task = TASKS[i + 1]
+            break
+
+    # 応答メッセージを生成
+    user_msg_html = templates.get_template("components/message.html").render(
+        {"request": request, "message": "この内容でOKです", "is_user": True}
+    )
+
+    # AIに「この内容でOKです」を伝えて、次のタスクの質問を生成させる
+    # Geminiが記入例も含めて質問を生成する
+    ai_next_response = await gemini_service.generate_response(
+        session_id, "この内容でOKです"
+    )
+
+    # マーカーとコンテンツの削除処理
+    import re
+
+    # [[CONTENT_START]] ~ [[CONTENT_END]] の部分を削除（承認済みコンテンツは再表示不要）
+    ai_next_response = re.sub(
+        r"\[\[CONTENT_START\]\].*?\[\[CONTENT_END\]\]",
+        "",
+        ai_next_response,
+        flags=re.DOTALL,
+    )
+
+    # [[COMPLETED:xxx]] マーカーを削除
+    ai_next_response = re.sub(r"\[\[COMPLETED:[a-z_]+\]\]", "", ai_next_response)
+
+    # 過剰な空白・改行を整理
+    ai_next_response = re.sub(r"\n{3,}", "\n\n", ai_next_response)
+    ai_next_response = ai_next_response.strip()
+
+    # フォールバック: Geminiが適切な応答を返さない場合
+    if not ai_next_response or len(ai_next_response.strip()) < 20:
+        if next_task:
+            ai_next_response = f"承認ありがとうございます。\n\nそれでは次に、「{next_task['title']}」についてお伺いします。\n\n{next_task['desc']}\n\nどのような内容でしょうか？"
+        else:
+            ai_next_response = "承認ありがとうございます。\n\nすべての項目が完了しました！左側の「計画書を確認・編集」から内容を確認し、必要に応じて編集してください。"
+
+    ai_msg_html = templates.get_template("components/message.html").render(
+        {"request": request, "message": ai_next_response, "is_user": False}
+    )
+
+    # チェックボックス更新用のOOB HTML
+    task_update_html = f"""
+    <input id="task-{task_id}"
+           name="task-{task_id}"
+           type="checkbox"
+           class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-600"
+           checked
+           hx-swap-oob="true">
+    """
+
+    response = HTMLResponse(content=user_msg_html + ai_msg_html + task_update_html)
+    response.set_cookie(key="session_id", value=session_id)
+
+    return response
+
+
 @app.post("/chat/select_industry", response_class=HTMLResponse)
 async def select_industry(
     request: Request,
@@ -566,28 +724,6 @@ async def chat_message(
             "components/industry_selector.html"
         ).render({"request": request})
 
-    # ドラフト提示マーカーの検出
-    if "[[DRAFT_PROPOSED]]" in ai_response_text:
-        ai_response_text = ai_response_text.replace("[[DRAFT_PROPOSED]]", "")
-        draft_buttons_html = """
-        <div class="flex gap-4 mt-2 mb-4 ml-12">
-            <button hx-post="/chat/message"
-                    hx-vals='{"user_message": "この内容でOKです"}'
-                    hx-target="#chat-history"
-                    hx-swap="beforeend"
-                    class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 font-bold transition-colors">
-                OK(次の項目へ)
-            </button>
-            <button hx-post="/chat/message"
-                    hx-vals='{"user_message": "文面を修正したいです"}'
-                    hx-target="#chat-history"
-                    hx-swap="beforeend"
-                    class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors">
-                文面を修正する
-            </button>
-        </div>
-        """
-
     # セッションからタスク状態をロード（deep copy）
     import copy
 
@@ -603,6 +739,40 @@ async def chat_message(
             if task["id"] in task_states:
                 task_copy["status"] = task_states[task["id"]]
             current_tasks.append(task_copy)
+
+    # ドラフト提示マーカーの検出
+    if "[[DRAFT_PROPOSED]]" in ai_response_text:
+        ai_response_text = ai_response_text.replace("[[DRAFT_PROPOSED]]", "")
+
+        # 現在進行中のタスク（最初のpendingタスク）を特定
+        current_task_id = None
+        for task in current_tasks:
+            if task["status"] == "pending":
+                current_task_id = task["id"]
+                break
+
+        if current_task_id:
+            draft_buttons_html = f"""
+            <div class="flex gap-4 mt-2 mb-4 ml-12">
+                <button hx-post="/chat/approve_draft"
+                        hx-vals='{{"task_id": "{current_task_id}"}}'
+                        hx-target="#chat-history"
+                        hx-swap="beforeend"
+                        class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 font-bold transition-colors">
+                    OK(次の項目へ)
+                </button>
+                <button hx-post="/chat/message"
+                        hx-vals='{{"user_message": "文面を修正したいです"}}'
+                        hx-target="#chat-history"
+                        hx-swap="beforeend"
+                        class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors">
+                    文面を修正する
+                </button>
+            </div>
+            """
+            print(f"[DEBUG] Draft buttons created for task: {current_task_id}")
+        else:
+            print("[WARNING] No pending task found for draft buttons")
 
     print(
         f"[DEBUG] Loaded tasks: {[t['id'] + ':' + t['status'] for t in current_tasks]}"
@@ -1379,7 +1549,7 @@ async def reset_session(
     現在のセッションを完全にリセットし、初期状態に戻します。
 
     サーバー側のセッションデータと会話履歴を削除し、
-    トップページへリダイレクト（クライアントサイドリダイレクト）を行います。
+    トップページへリダイレクトします。
 
     Args:
         request (Request): FastAPIのリクエストオブジェクト
@@ -1387,7 +1557,7 @@ async def reset_session(
         db (AsyncSession): データベースセッション
 
     Returns:
-        HTMLResponse: リダイレクト用のJavaScriptを含むHTML
+        Response: HX-Redirectヘッダーを含むレスポンス
     """
     if session_id:
         # セッションデータを削除
@@ -1395,12 +1565,9 @@ async def reset_session(
         # チャットセッションもリセット
         gemini_service.reset_chat_session(session_id)
 
-    # ページ全体をリロード
-    return HTMLResponse(
-        """
-        <script>
-            window.location.href = '/';
-        </script>
-        """,
-        status_code=200,
-    )
+    # htmxのリダイレクト機能を使用
+    from fastapi.responses import Response
+
+    response = Response(status_code=200)
+    response.headers["HX-Redirect"] = "/"
+    return response

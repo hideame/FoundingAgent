@@ -23,6 +23,9 @@ engine = create_async_engine(
     echo=True,  # SQLログを出力（開発時のみTrueを推奨）
     pool_pre_ping=True,  # 接続プールの健全性チェック
     pool_recycle=3600,  # 1時間ごとに接続をリサイクル
+    connect_args={
+        "charset": "utf8mb4",
+    },
 )
 
 # 非同期セッションファクトリ
