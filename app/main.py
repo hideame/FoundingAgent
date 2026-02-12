@@ -13,8 +13,10 @@ from fastapi.templating import Jinja2Templates
 from openpyxl.utils import get_column_letter, range_boundaries
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from sqlalchemy import select
+
 from app.database import close_db, get_db, init_db
-from app.models import Session as SessionModel
+from app.models import ExampleContent, Session as SessionModel
 from app.services.gemini_service import GeminiService
 from app.store import session_store
 
@@ -299,6 +301,139 @@ def extract_single_section_from_response(ai_response: str, task_id: str) -> str 
     return content if content else None
 
 
+# 業種・セクションの表示名定義
+INDUSTRY_DISPLAY_NAMES = {
+    "software": "ソフトウェア開発業（ITサービス、Webサービス、マッチングサービス、アプリ開発等）",
+    "restaurant": "洋風居酒屋（飲食店）",
+    "beauty": "美容業",
+    "car_sales": "中古自動車販売業",
+    "apparel": "婦人服・子供服小売業",
+    "construction": "内装工事業",
+    "cram_school": "学習塾",
+    "dentist": "歯科診療所",
+    "care_service": "介護サービス",
+}
+
+SECTION_DISPLAY_NAMES = {
+    "motivation": "1. 創業の動機",
+    "background": "2. 経営者の略歴等",
+    "service": "3. 取扱商品・サービス",
+    "employees": "4. 従業員",
+    "partners": "5. 取引先・取引関係等",
+    "related_companies": "6. 関連企業",
+    "loans": "7. お借入の状況",
+    "funds": "8. 必要な資金と調達方法",
+    "outlook": "9. 事業の見通し（月平均）",
+}
+
+SECTION_ORDER = [
+    "motivation", "background", "service", "employees", "partners",
+    "related_companies", "loans", "funds", "outlook",
+]
+
+INDUSTRY_ORDER = [
+    "software", "restaurant", "beauty", "car_sales", "apparel",
+    "construction", "cram_school", "dentist", "care_service",
+]
+
+
+def convert_western_to_wareki(text: str) -> str:
+    """
+    テキスト中の西暦年月表記（例: 2010年4月）を和暦（元号）表記に変換する。
+    既に和暦表記になっている箇所は変換しない。
+
+    元号の境界:
+    - 昭和: 1926〜1989/1/7
+    - 平成: 1989/1/8〜2019/4/30
+    - 令和: 2019/5/1〜
+    """
+
+    def year_month_to_wareki(year: int, month: int | None) -> str:
+        if year > 2019 or (year == 2019 and month is not None and month >= 5):
+            wareki_year = year - 2018
+            era = "令和"
+        elif year == 2019:
+            # 2019年1〜4月 → 平成31年
+            wareki_year = 31
+            era = "平成"
+        elif year > 1989 or (year == 1989 and month is not None and month >= 2):
+            wareki_year = year - 1988
+            era = "平成"
+        elif year == 1989:
+            # 1989年1月 → 昭和64年
+            wareki_year = 64
+            era = "昭和"
+        elif year >= 1926:
+            wareki_year = year - 1925
+            era = "昭和"
+        else:
+            return f"{year}年"  # 大正以前はそのまま
+
+        year_str = "元" if wareki_year == 1 else str(wareki_year)
+        return f"{era}{year_str}年"
+
+    def replace_match(m: re.Match) -> str:
+        year = int(m.group(1))
+        month_str = m.group(2)  # "4月" or None
+        month = int(m.group(3)) if m.group(3) else None
+        wareki = year_month_to_wareki(year, month)
+        return wareki + (month_str or "")
+
+    # 西暦4桁（1900〜2099）の年月表記を対象にする。直前が数字の場合は除外
+    pattern = r'(?<!\d)((?:19|20)\d{2})年((\d{1,2})月)?'
+    return re.sub(pattern, replace_match, text)
+
+
+async def build_examples_text(db: AsyncSession) -> str:
+    """
+    example_contentsテーブルから全業種の記入例を取得し、
+    システムプロンプト用のテキストに整形して返します。
+    """
+    result = await db.execute(select(ExampleContent))
+    examples = result.scalars().all()
+
+    # 業種・セクションでインデックス化
+    examples_dict: dict[str, dict[str, str]] = {}
+    for ex in examples:
+        examples_dict.setdefault(ex.industry_type, {})[ex.section_key] = ex.example_text
+
+    parts = []
+    for industry in INDUSTRY_ORDER:
+        if industry not in examples_dict:
+            continue
+        display_name = INDUSTRY_DISPLAY_NAMES.get(industry, industry)
+        parts.append(f"■{display_name}")
+        parts.append("")
+        for section_key in SECTION_ORDER:
+            if section_key not in examples_dict[industry]:
+                continue
+            section_name = SECTION_DISPLAY_NAMES.get(section_key, section_key)
+            parts.append(section_name)
+            parts.append(examples_dict[industry][section_key])
+            parts.append("")
+
+    return "\n".join(parts)
+
+
+async def get_section_example(
+    db: AsyncSession, industry_type: str, section_key: str
+) -> str | None:
+    """
+    指定した業種・セクションの記入例をDBから取得して返します。
+    見つからない場合はNoneを返します。
+    """
+    if not industry_type or not section_key:
+        return None
+    result = await db.execute(
+        select(ExampleContent).where(
+            ExampleContent.industry_type == industry_type,
+            ExampleContent.section_key == section_key,
+        )
+    )
+    example = result.scalar_one_or_none()
+    return example.example_text if example else None
+
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(
     request: Request,
@@ -408,9 +543,12 @@ async def start_chat(
                 initial_task_title = task["title"]
                 break
 
+    # DBから記入例テキストを構築してシステムプロンプトに渡す
+    examples_text = await build_examples_text(db)
+
     # エージェントからの初期挨拶を生成
     # GeminiService.start_chat_session requires session_id
-    tGreeting = await gemini_service.start_chat_session(session_id, initial_task_title)
+    tGreeting = await gemini_service.start_chat_session(session_id, initial_task_title, examples_text)
 
     # 業種選択マーカーの検出
     industry_selector_html = ""
@@ -505,6 +643,13 @@ async def approve_draft(
                 .strip()
             )
 
+    # background（経営者の略歴等）は西暦→和暦に変換
+    if draft_content and task_id == "background":
+        converted = convert_western_to_wareki(draft_content)
+        if converted != draft_content:
+            print("[DEBUG] 和暦変換を適用しました（background）")
+            draft_content = converted
+
     # タスクを完了状態に更新
     task_found = False
     for task in current_tasks:
@@ -543,10 +688,19 @@ async def approve_draft(
         {"request": request, "message": "この内容でOKです", "is_user": True}
     )
 
+    # 次のセクションの記入例をDBから取得してAIメッセージに添付
+    industry_type = session_data.get("industry_type") if session_data else None
+    ai_ok_message = "この内容でOKです。"
+    if next_task and industry_type:
+        next_example = await get_section_example(db, industry_type, next_task["id"])
+        if next_example:
+            section_name = SECTION_DISPLAY_NAMES.get(next_task["id"], next_task["title"])
+            ai_ok_message += f"\n\n【{section_name} の記入例（参考）】\n{next_example}"
+            print(f"[DEBUG] 記入例を添付: {next_task['id']} ({industry_type})")
+
     # AIに「この内容でOKです」を伝えて、次のタスクの質問を生成させる
-    # Geminiが記入例も含めて質問を生成する
     ai_next_response = await gemini_service.generate_response(
-        session_id, "この内容でOKです"
+        session_id, ai_ok_message
     )
 
     # マーカーとコンテンツの削除処理
@@ -609,7 +763,7 @@ async def select_industry(
     if not session_id:
         return HTMLResponse("Session not found", status_code=400)
 
-    # 業種タイプのマッピング
+    # 業種タイプのマッピング（番号 → 内部キー）
     industry_mapping = {
         "1": "restaurant",
         "2": "beauty",
@@ -622,6 +776,19 @@ async def select_industry(
         "9": "care_service",
     }
 
+    # AIに伝える業種名ラベル（番号 → 日本語表示名）
+    industry_label_mapping = {
+        "1": "洋風居酒屋（飲食店）",
+        "2": "美容業",
+        "3": "中古自動車販売業",
+        "4": "婦人服・子供服小売業",
+        "5": "ソフトウェア開発業（ITサービス、Webサービス、マッチングサービス、アプリ開発等）",
+        "6": "内装工事業",
+        "7": "学習塾",
+        "8": "歯科診療所",
+        "9": "介護サービス",
+    }
+
     industry_type = industry_mapping.get(industry)
     if not industry_type:
         return HTMLResponse("Invalid industry selection", status_code=400)
@@ -630,8 +797,17 @@ async def select_industry(
     await session_store.update_industry_type(db, session_id, industry_type)
     print(f"[DEBUG] Industry type set to: {industry_type}")
 
-    # AIに業種選択を伝える
-    ai_response_text = await gemini_service.generate_response(session_id, industry)
+    # AIに業種名を明示して伝える（数字だけだと誤判定する恐れがあるため）
+    industry_label = industry_label_mapping.get(industry, industry)
+    ai_message = f"「{industry_label}」を選択しました。"
+
+    # 最初のセクション（創業の動機）の記入例をDBから取得してメッセージに添付
+    first_example = await get_section_example(db, industry_type, "motivation")
+    if first_example:
+        section_name = SECTION_DISPLAY_NAMES.get("motivation", "1. 創業の動機")
+        ai_message += f"\n\n【{section_name} の記入例（{industry_label}の場合）】\n{first_example}"
+
+    ai_response_text = await gemini_service.generate_response(session_id, ai_message)
 
     # チャット履歴を保存
     history_data = gemini_service.get_chat_history(session_id)
@@ -740,8 +916,19 @@ async def chat_message(
                 task_copy["status"] = task_states[task["id"]]
             current_tasks.append(task_copy)
 
-    # ドラフト提示マーカーの検出
-    if "[[DRAFT_PROPOSED]]" in ai_response_text:
+    # ドラフト提示マーカーの検出（フォールバック検出を含む）
+    # [[DRAFT_PROPOSED]]がなくても、ドラフト的な内容を含む場合はOKボタンを表示する
+    DRAFT_PHRASES = ["でよろしいでしょうか", "いかがでしょうか", "ご確認ください", "以下の内容で"]
+    has_draft_proposed = "[[DRAFT_PROPOSED]]" in ai_response_text
+    if not has_draft_proposed:
+        if "[[CONTENT_START]]" in ai_response_text:
+            has_draft_proposed = True
+            print("[DEBUG] Fallback: [[CONTENT_START]] detected as draft proposal")
+        elif any(phrase in ai_response_text for phrase in DRAFT_PHRASES):
+            has_draft_proposed = True
+            print("[DEBUG] Fallback: draft confirmation phrase detected")
+
+    if has_draft_proposed:
         ai_response_text = ai_response_text.replace("[[DRAFT_PROPOSED]]", "")
 
         # 現在進行中のタスク（最初のpendingタスク）を特定
@@ -778,94 +965,15 @@ async def chat_message(
         f"[DEBUG] Loaded tasks: {[t['id'] + ':' + t['status'] for t in current_tasks]}"
     )
 
-    # タスク完了マーカーの検出（マーカー削除前に）
-    match = re.search(r"\[\[COMPLETED:([a-z_]+)\]\]", ai_response_text)
-    completed_task_id = None
-    section_content = None
-
-    if match:
-        completed_task_id = match.group(1)
-        print(f"[DEBUG] Found COMPLETED marker for task: {completed_task_id}")
-
-        # --- セクション内容の抽出（マーカー削除前に実行）---
-        print(
-            f"[DEBUG] AI response for extraction (before cleanup): {ai_response_text[:500]}"
-        )
-        section_content = extract_single_section_from_response(
-            ai_response_text, completed_task_id
-        )
-
-        if section_content:
-            print(f"[DEBUG] ✓ Extracted section content for {completed_task_id}:")
-            print(f"[DEBUG]   Length: {len(section_content)} chars")
-            print(f"[DEBUG]   Preview: {section_content[:100]}...")
-        else:
-            print(
-                f"[WARNING] ✗ Could not extract section content for {completed_task_id}"
-            )
-
-    # コンテンツマーカーを削除（表示用）
+    # コンテンツマーカーを削除（表示用。ドラフト内容はOKボタン経由で保存するため表示不要）
     ai_response_text = ai_response_text.replace("[[CONTENT_START]]", "")
     ai_response_text = ai_response_text.replace("[[CONTENT_END]]", "")
 
-    # デバッグ: 改行の状況を確認
-    print(f"[DEBUG] Before cleanup - response preview: {repr(ai_response_text[:300])}")
+    # [[COMPLETED:xxx]] マーカーをAIが誤出力した場合のクリーンアップ（保存処理は行わない）
+    ai_response_text = re.sub(r"\n*\[\[COMPLETED:[a-z_]+\]\]\n*", "\n\n", ai_response_text)
 
-    if match:
-        print(f"[DEBUG] Found COMPLETED marker for task: {completed_task_id}")
-        # マーカーとその前後の改行を削除（\n\n[[COMPLETED:xxx]]\n\n -> \n\n に）
-        ai_response_text = re.sub(
-            r"\n*\[\[COMPLETED:[a-z_]+\]\]\n*", "\n\n", ai_response_text
-        )
-
-        # 過剰な改行を整理（3つ以上の連続する改行を2つに）
-        ai_response_text = re.sub(r"\n{3,}", "\n\n", ai_response_text)
-
-        print(
-            f"[DEBUG] After cleanup - response preview: {repr(ai_response_text[:300])}"
-        )
-
-        # タスクステータスの更新（セッション内のタスクリストを更新）
-        for task in current_tasks:
-            if task["id"] == completed_task_id:
-                task["status"] = "done"
-                print(f"[DEBUG] Updated task {completed_task_id} to done")
-
-                # 更新されたチェックボックスのHTMLを生成 (OOB Swap用)
-                # targetは id="task-{id}"
-                task_update_html = f"""
-                <input id="task-{completed_task_id}"
-                       name="task-{completed_task_id}"
-                       type="checkbox"
-                       class="h-4 w-4 rounded border-gray-300 text-blue-600 focus:ring-blue-600"
-                       checked
-                       hx-swap-oob="true">
-                """
-                print(
-                    f"[DEBUG] Generated OOB HTML for checkbox: task-{completed_task_id}"
-                )
-
-                # --- セクション内容の保存 ---
-                if section_content:
-                    # 該当セクションのみをデータベースに保存
-                    section_update = {completed_task_id: section_content}
-
-                    # 現在のタスク状態とチャット履歴を取得して保存
-                    history_data_temp = gemini_service.get_chat_history(session_id)
-                    await session_store.save_session(
-                        db,
-                        session_id,
-                        current_tasks,
-                        history_data_temp,
-                        sections=section_update,
-                    )
-                    print(f"[DEBUG] ✓ Saved section {completed_task_id} to database")
-                else:
-                    print(
-                        f"[WARNING] ✗ No section content to save for {completed_task_id}"
-                    )
-
-                break
+    # 過剰な改行を整理
+    ai_response_text = re.sub(r"\n{3,}", "\n\n", ai_response_text)
 
     ai_msg_html = templates.get_template("components/message.html").render(
         {"request": request, "message": ai_response_text, "is_user": False}
