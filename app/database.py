@@ -17,15 +17,21 @@ DATABASE_URL = os.getenv(
     "mysql+aiomysql://founding_user:founding_pass@localhost:3306/founding_agent",
 )
 
+# Cloud SQL接続名（Cloud Run環境で設定。例: project:asia-northeast1:instance）
+CLOUD_SQL_CONNECTION_NAME = os.getenv("CLOUD_SQL_CONNECTION_NAME")
+
+# connect_argsの設定（Cloud Run環境ではUnix socketを使用）
+_connect_args = {"charset": "utf8mb4"}
+if CLOUD_SQL_CONNECTION_NAME:
+    _connect_args["unix_socket"] = f"/cloudsql/{CLOUD_SQL_CONNECTION_NAME}"
+
 # 非同期エンジンの作成
 engine = create_async_engine(
     DATABASE_URL,
-    echo=True,  # SQLログを出力（開発時のみTrueを推奨）
+    echo=os.getenv("DEBUG", "False").lower() == "true",
     pool_pre_ping=True,  # 接続プールの健全性チェック
     pool_recycle=3600,  # 1時間ごとに接続をリサイクル
-    connect_args={
-        "charset": "utf8mb4",
-    },
+    connect_args=_connect_args,
 )
 
 # 非同期セッションファクトリ

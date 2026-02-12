@@ -18,6 +18,12 @@ database_url = os.getenv("DATABASE_URL")
 if database_url:
     # Replace aiomysql with pymysql for Alembic (synchronous driver)
     database_url = database_url.replace("mysql+aiomysql://", "mysql+pymysql://")
+    # Cloud Run環境：Unix socketでCloud SQLに接続
+    cloud_sql_connection_name = os.getenv("CLOUD_SQL_CONNECTION_NAME")
+    if cloud_sql_connection_name:
+        unix_socket_path = f"/cloudsql/{cloud_sql_connection_name}"
+        separator = "&" if "?" in database_url else "?"
+        database_url += f"{separator}unix_socket={unix_socket_path}"
     config.set_main_option("sqlalchemy.url", database_url)
 
 # Interpret the config file for Python logging.
