@@ -81,7 +81,7 @@ DEBUG=True
 
 **注意:**
 - `GOOGLE_CLOUD_PROJECT`: 1.1で作成したプロジェクトID
-- `GOOGLE_CLOUD_LOCATION`: リージョン（デフォルトは `us-central1`、東京リージョンは `asia-northeast1`）
+- `GOOGLE_CLOUD_LOCATION`: 東京リージョン（`asia-northeast1`）はVertex AIで選択できるモデルの種類が少ないため、デフォルトリージョンの `us-central1` を使用します。
 
 ### 2. MySQLデータベースの起動
 
