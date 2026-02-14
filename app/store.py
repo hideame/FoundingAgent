@@ -97,14 +97,8 @@ class SessionStore:
                 valid_sections = {k: v for k, v in sections.items() if v is not None}
 
                 if valid_sections:  # 有効なセクションがある場合のみ処理
-                    print(
-                        f"[DEBUG] save_session - Saving sections: {list(valid_sections.keys())}"
-                    )
                     if not session.business_plan:
                         # 新規作成
-                        print(
-                            f"[DEBUG] save_session - Creating new BusinessPlan for session {session_id}"
-                        )
                         session.business_plan = BusinessPlan(session_id=session_id)
                         db.add(session.business_plan)
 
@@ -112,25 +106,12 @@ class SessionStore:
                     for key, value in valid_sections.items():
                         if hasattr(session.business_plan, key):
                             setattr(session.business_plan, key, value)
-                            # デバッグ: 改行を含むデータの確認
-                            preview = value[:50] if value else "None"
-                            has_newline = "\n" in value if value else False
-                            print(
-                                f"[DEBUG] save_session - Set {key} = {preview}... (has_newline: {has_newline}, length: {len(value) if value else 0})"
-                            )
                         else:
-                            print(
-                                f"[DEBUG] save_session - Warning: {key} is not a valid attribute"
-                            )
+                            print(f"[WARNING] save_session - {key} is not a valid attribute")
 
                     session.business_plan.updated_at = datetime.utcnow()
-                else:
-                    print(
-                        f"[DEBUG] save_session - No valid sections to save (all None)"
-                    )
 
             await db.commit()
-            print(f"[DEBUG] save_session - Successfully committed session {session_id}")
 
         except Exception as e:
             await db.rollback()
@@ -185,9 +166,6 @@ class SessionStore:
             # 事業計画の各セクション
             sections = {}
             if session.business_plan:
-                print(
-                    f"[DEBUG] load_session - business_plan found for session {session_id}"
-                )
                 for section_key in [
                     "motivation",
                     "background",
@@ -202,16 +180,6 @@ class SessionStore:
                 ]:
                     value = getattr(session.business_plan, section_key, None)
                     sections[section_key] = value
-                    if value:
-                        print(f"[DEBUG] load_session - {section_key}: {value[:50]}...")
-            else:
-                print(
-                    f"[DEBUG] load_session - No business_plan found for session {session_id}"
-                )
-
-            print(
-                f"[DEBUG] load_session - Returning {len([k for k, v in sections.items() if v])} sections with content"
-            )
 
             # 業種タイプをbusiness_planから取得
             industry_type = None
@@ -321,9 +289,6 @@ class SessionStore:
                 db.add(business_plan)
 
             await db.commit()
-            print(
-                f"[DEBUG] Updated industry_type to '{industry_type}' for session {session_id}"
-            )
 
         except Exception as e:
             await db.rollback()

@@ -225,16 +225,18 @@ class GeminiService:
             return "申し訳ありません。創業計画書の作成に失敗しました。"
 
     async def verify_section_draft(
-        self, section_name: str, draft: str, example: str
+        self, section_name: str, draft: str, example: str,
+        self_check_items: list[str] | None = None
     ) -> dict:
         """
-        セクションのドラフト内容を記入例と比較して改善点を確認します。
+        セクションのドラフト内容を記入例・セルフチェック項目と比較して改善点を確認します。
         チャットセッションとは独立した単発のAPIコールで検証を行います。
 
         Args:
             section_name (str): セクション名（例: "創業の動機"）
             draft (str): ユーザーのドラフト内容
             example (str): 参考となる記入例
+            self_check_items (list[str] | None): セルフチェックリストの確認項目
 
         Returns:
             dict: {"has_issues": bool, "feedback": str}
@@ -248,6 +250,16 @@ class GeminiService:
         if _draft_normalized in _NASHI_PATTERNS:
             return {"has_issues": False, "feedback": ""}
 
+        # セルフチェック項目のテキストを生成
+        self_check_section = ""
+        if self_check_items:
+            items_text = "\n".join(f"- {item}" for item in self_check_items)
+            self_check_section = f"""
+【日本政策金融公庫 セルフチェックリスト】
+このセクションで確認すべき項目です。ドラフトがこれらを満たしているか評価に加えてください：
+{items_text}
+"""
+
         prompt = f"""
 以下は創業計画書の「{section_name}」セクションのドラフトと、参考となる記入例です。
 
@@ -256,11 +268,12 @@ class GeminiService:
 
 【参考となる記入例】
 {example}
-
-記入例を「合格ライン」として、ドラフトが合格ラインを明確に下回っている場合のみフィードバックしてください。
+{self_check_section}
+記入例を「合格ライン」として、かつセルフチェックリストの観点も踏まえて、ドラフトが明確に不足している場合のみフィードバックしてください。
 
 判定基準（すべて満たす場合のみ FEEDBACK）：
 - 記入例に含まれている重要な項目・情報カテゴリが、ドラフトから完全に抜け落ちている
+- またはセルフチェックリストの項目が明らかに満たされていない
 - かつ、その欠落がこのセクションの目的を損なう程度である
 
 以下は指摘しないでください：

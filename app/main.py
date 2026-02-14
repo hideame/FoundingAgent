@@ -264,10 +264,6 @@ def extract_single_section_from_response(ai_response: str, task_id: str) -> str 
     Returns:
         str | None: 抽出されたセクション内容。見つからない場合はNone
     """
-    print(f"[DEBUG] Extracting content for task: {task_id}")
-    print(f"[DEBUG] AI response length: {len(ai_response)} chars")
-    print(f"[DEBUG] AI response preview: {ai_response[:300]}")
-
     # [[CONTENT_START]] と [[CONTENT_END]] の間のコンテンツを取得
     start_marker = "[[CONTENT_START]]"
     end_marker = "[[CONTENT_END]]"
@@ -291,12 +287,6 @@ def extract_single_section_from_response(ai_response: str, task_id: str) -> str 
 
     # 前後の空白・改行を削除（内部の改行は保持）
     content = content.strip()
-
-    print(f"[DEBUG] ✓ Extracted content:")
-    print(f"[DEBUG]   Length: {len(content)} chars")
-    print(f"[DEBUG]   Preview: {content[:200]}...")
-    print(f"[DEBUG]   Contains newlines: {chr(10) in content}")
-    print(f"[DEBUG]   Number of lines: {len(content.splitlines())}")
 
     return content if content else None
 
@@ -324,6 +314,36 @@ SECTION_DISPLAY_NAMES = {
     "loans": "7. お借入の状況",
     "funds": "8. 必要な資金と調達方法",
     "outlook": "9. 事業の見通し（月平均）",
+}
+
+# 日本政策金融公庫「創業計画書セルフチェックリスト」(2023年版) より
+SELF_CHECK_ITEMS: dict[str, list[str]] = {
+    "motivation": [
+        "創業への熱意や創業を志すまでの経緯を記載していますか？",
+    ],
+    "background": [
+        "担当した業務や役職、実績などを記載していますか？",
+        "身に着けた資格・スキルなどがあれば、それらについて記載していますか？",
+    ],
+    "service": [
+        "誰に、何を、いくらで販売するか記載していますか？",
+        "商品・サービスのセールスポイントを記載していますか？",
+        "販売ターゲットに合った販売戦略について記載していますか？",
+        "競合他社や市場について調べて、記載していますか？",
+    ],
+    "partners": [
+        "入金や支払いのタイミングなど、取引形態を記載していますか？",
+    ],
+    "funds": [
+        "見積金額が適切か、相場を調べたり相見積もりを取得するなどして検証していますか？",
+        "事業開始後の運転資金（半年程度の赤字補てん資金など）について検討していますか？",
+        "自己資金が少なく、借入依存の資金調達計画になっていませんか？",
+    ],
+    "outlook": [
+        "計算根拠をもって売上高や売上原価の予測を立てていますか？",
+        "経費に漏れがないか検討していますか？",
+        "利益から借入の返済が可能な収支計画となっていますか？",
+    ],
 }
 
 SECTION_ORDER = [
@@ -533,7 +553,6 @@ async def start_chat(
     new_session = SessionModel(id=session_id)
     db.add(new_session)
     await db.commit()
-    print(f"[DEBUG] Created new session: {session_id}")
 
     initial_task_title = None
     if task_id:
@@ -597,8 +616,6 @@ async def approve_draft(
     if not session_id:
         return HTMLResponse("Session not found", status_code=400)
 
-    print(f"[DEBUG] /chat/approve_draft - task_id: {task_id}, session_id: {session_id}")
-
     # セッションデータをロード
     import copy
 
@@ -624,15 +641,10 @@ async def approve_draft(
                 last_ai_response = msg.get("parts", [{}])[0].get("text", "")
                 break
 
-    print(
-        f"[DEBUG] Last AI response preview: {last_ai_response[:200] if last_ai_response else 'None'}"
-    )
-
     # ドラフト内容を取得
     # 優先: フォームから渡された表示済み内容（和暦変換済み）をそのまま使用
     if draft_content and draft_content.strip():
         draft_content = draft_content.strip()
-        print(f"[DEBUG] Using pre-converted draft from form: {draft_content[:100]}")
     else:
         # フォールバック: チャット履歴からドラフト内容を抽出して変換
         print("[WARNING] No draft_content from form, extracting from chat history")
@@ -649,7 +661,6 @@ async def approve_draft(
         # フォールバック時のみ和暦変換を適用
         if draft_content and task_id == "background":
             draft_content = convert_western_to_wareki(draft_content)
-            print("[DEBUG] 和暦変換を適用しました（background・フォールバック）")
 
     # --- 記入例との比較検証 ---
     # 前回の検証でフィードバックを表示済みかどうかをCookieで判定
@@ -661,9 +672,9 @@ async def approve_draft(
             import html as _html
             escaped_draft = _html.escape(draft_content, quote=True)
             section_label = SECTION_DISPLAY_NAMES.get(task_id, task_id)
-            print(f"[DEBUG] セクション検証開始: {section_label} (flagged={bool(verification_flagged)})")
             section_verification = await gemini_service.verify_section_draft(
-                section_label, draft_content, current_example
+                section_label, draft_content, current_example,
+                self_check_items=SELF_CHECK_ITEMS.get(task_id),
             )
             if section_verification.get("has_issues"):
                 # 問題あり → フィードバック + 「このままOKにする」ボタン
@@ -671,7 +682,6 @@ async def approve_draft(
                 feedback_text = section_verification.get("feedback", "")
                 # AIがMarkdownを返した場合に備えてHTMLタグに変換
                 feedback_text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", feedback_text)
-                print(f"[DEBUG] 検証で問題を検出: {feedback_text}")
                 early_user_msg_html = templates.get_template("components/message.html").render(
                     {"request": request, "message": "この内容でOKです", "is_user": True}
                 )
@@ -706,7 +716,6 @@ async def approve_draft(
             elif verification_flagged:
                 # ブラッシュアップ後に再検証してOKだった場合でも自動進行しない
                 # → 明示的な「次のセクションへ」ボタンを表示して確認を求める
-                print(f"[DEBUG] 改善後の再検証でOK: {task_id}")
                 early_user_msg_html = templates.get_template("components/message.html").render(
                     {"request": request, "message": "この内容でOKです", "is_user": True}
                 )
@@ -740,7 +749,6 @@ async def approve_draft(
         if task["id"] == task_id:
             task["status"] = "done"
             task_found = True
-            print(f"[DEBUG] Task {task_id} marked as done")
             break
 
     if not task_found:
@@ -757,7 +765,6 @@ async def approve_draft(
             history_data,
             sections=section_update,
         )
-        print(f"[DEBUG] Saved draft content for task {task_id}")
 
     # 次のタスクを見つける
     next_task = None
@@ -795,8 +802,6 @@ async def approve_draft(
     <div class="text-gray-700 text-xs leading-relaxed">{escaped_example}</div>
   </div>
 </div>"""
-            print(f"[DEBUG] 記入例HTMLを生成: {next_task['id']} ({industry_type})")
-
     # 全セクション完了の場合はAI呼び出しをスキップ（AIが[[DRAFT_PROPOSED]]を含む余計な応答を返すのを防ぐ）
     if next_task:
         # 次のセクションがある場合のみAIを呼び出して次の質問を生成させる
@@ -910,7 +915,6 @@ async def select_industry(
 
     # データベースに業種タイプを保存
     await session_store.update_industry_type(db, session_id, industry_type)
-    print(f"[DEBUG] Industry type set to: {industry_type}")
 
     # AIに業種名を明示して伝える（数字だけだと誤判定する恐れがあるため）
     industry_label = industry_label_mapping.get(industry, industry)
@@ -983,8 +987,6 @@ async def chat_message(
     # AI応答の生成
     ai_response_text = await gemini_service.generate_response(session_id, user_message)
 
-    print(f"[DEBUG] AI Response preview: {ai_response_text[:200]}")
-
     # 業種選択の検出と処理
     industry_mapping = {
         "1": "restaurant",
@@ -1003,7 +1005,6 @@ async def chat_message(
     if user_message_stripped in industry_mapping:
         industry_type = industry_mapping[user_message_stripped]
         await session_store.update_industry_type(db, session_id, industry_type)
-        print(f"[DEBUG] Industry type set to: {industry_type}")
 
     # タスク完了マーカーの検出と処理
     task_update_html = ""
@@ -1041,10 +1042,8 @@ async def chat_message(
     if not has_draft_proposed:
         if "[[CONTENT_START]]" in ai_response_text:
             has_draft_proposed = True
-            print("[DEBUG] Fallback: [[CONTENT_START]] detected as draft proposal")
         elif any(phrase in ai_response_text for phrase in DRAFT_PHRASES):
             has_draft_proposed = True
-            print("[DEBUG] Fallback: draft confirmation phrase detected")
 
     if has_draft_proposed:
         ai_response_text = ai_response_text.replace("[[DRAFT_PROPOSED]]", "")
@@ -1096,13 +1095,8 @@ async def chat_message(
                 </div>
             </form>
             """
-            print(f"[DEBUG] Draft buttons created for task: {current_task_id}")
         else:
             print("[WARNING] No pending task found for draft buttons")
-
-    print(
-        f"[DEBUG] Loaded tasks: {[t['id'] + ':' + t['status'] for t in current_tasks]}"
-    )
 
     # コンテンツマーカーを削除（表示用。ドラフト内容はOKボタン経由で保存するため表示不要）
     ai_response_text = ai_response_text.replace("[[CONTENT_START]]", "")
@@ -1179,16 +1173,10 @@ async def edit_plan(
         return HTMLResponse("Session not found", status_code=400)
 
     data = await session_store.load_session(db, session_id)
-    print(f"[DEBUG] /plan/edit - session_id: {session_id}")
-    print(f"[DEBUG] /plan/edit - data loaded: {data is not None}")
 
     sections = {}
     if data and data.get("sections"):
         sections = data["sections"]
-        print(f"[DEBUG] /plan/edit - sections keys: {list(sections.keys())}")
-        print(
-            f"[DEBUG] /plan/edit - sections with content: {[k for k, v in sections.items() if v]}"
-        )
     else:
         # 空のセクション辞書を用意（テンプレートでエラーを防ぐ）
         sections = {
@@ -1203,8 +1191,6 @@ async def edit_plan(
             "outlook": None,
             "free_description": None,
         }
-        print("[DEBUG] /plan/edit - No sections found, using empty template")
-
     # 業種に応じた記入例をDBから取得
     industry_type = data.get("industry_type") if data else None
     examples = {}
@@ -1216,7 +1202,12 @@ async def edit_plan(
 
     return templates.TemplateResponse(
         "components/plan_editor.html",
-        {"request": request, "sections": sections, "examples": examples},
+        {
+            "request": request,
+            "sections": sections,
+            "examples": examples,
+            "self_check_items": SELF_CHECK_ITEMS,
+        },
     )
 
 
@@ -1274,12 +1265,6 @@ async def save_plan(
     if not data:
         data = {"task_states": {}, "chat_history": []}
 
-    # デバッグ: 受信したフォームデータを確認
-    print(f"[DEBUG] /plan/save - Received background data:")
-    print(f"[DEBUG]   Length: {len(background)} chars")
-    print(f"[DEBUG]   Raw: {repr(background[:200])}")
-    print(f"[DEBUG]   Contains newlines: {'\\n' in background or '\\r' in background}")
-
     # フォームデータからセクション辞書を構築
     # strip()は前後の空白のみ削除し、内部の改行は保持する
     sections = {
@@ -1298,14 +1283,6 @@ async def save_plan(
         if free_description.strip()
         else None,
     }
-
-    print(
-        f"[DEBUG] /plan/save - Saving {len([v for v in sections.values() if v])} sections with content"
-    )
-    if sections.get("background"):
-        print(
-            f"[DEBUG] /plan/save - background after strip: {repr(sections['background'][:200])}"
-        )
 
     # タスク状態をTASKS形式に変換
     task_states = data.get("task_states", {})
@@ -1400,12 +1377,6 @@ async def generate_plan(
     existing_sections = {}
     if current_data and current_data.get("sections"):
         existing_sections = current_data["sections"]
-        print(
-            f"[DEBUG] /plan/generate - Found existing sections: {list(existing_sections.keys())}"
-        )
-        print(
-            f"[DEBUG] /plan/generate - Sections with data: {[k for k, v in existing_sections.items() if v]}"
-        )
 
     # 全文テキストをセクション別に分割
     new_sections = extract_sections_from_text(plan_text)
@@ -1427,10 +1398,8 @@ async def generate_plan(
         # 既存データがあればそれを使用、なければ新規生成データを使用
         if existing_sections.get(key):
             sections[key] = existing_sections[key]
-            print(f"[DEBUG] /plan/generate - Using existing data for {key}")
         elif new_sections.get(key):
             sections[key] = new_sections[key]
-            print(f"[DEBUG] /plan/generate - Using new generated data for {key}")
         else:
             sections[key] = None
 
@@ -1452,7 +1421,6 @@ async def generate_plan(
 
     # 生成した計画書をAIで自動検証（チャットセッションとは独立した単発の検証）
     verification = await gemini_service.verify_business_plan(sections)
-    print(f"[DEBUG] /plan/generate - verification status: {verification.get('status')}")
 
     # ステップの状態を更新 (Conceptual: 1->Completed, 2->Current)
     current_steps = [s.copy() for s in ROADMAP_STEPS]
@@ -1585,10 +1553,6 @@ async def download_plan_excel(
     for key, cell in label_cells.items():
         mapping[key] = choose_target_cell(cell)
 
-    print("[DEBUG] Cell mapping detected:")
-    for key, addr in mapping.items():
-        print(f"  {key}: {addr}")
-
     # フォールバック用の静的マッピング（テンプレート検出できない場合）
     fallback_mapping = {
         "motivation": "A9",
@@ -1610,20 +1574,12 @@ async def download_plan_excel(
     mapping["background"] = "H13"  # 経営者の略歴等
 
     # データベースから取得したセクションデータをExcelに転記
-    print("[DEBUG] Starting Excel data export...")
-    print(f"[DEBUG] Sections to export: {list(sections.keys())}")
-    print(f"[DEBUG] Sections with content: {[k for k, v in sections.items() if v]}")
-
     for key, content in sections.items():
         if content:
             # 「創業の動機」は特殊処理（60文字ごとに分割してB7～B12に転記）
             if key == "motivation":
-                print(
-                    "[DEBUG] Processing motivation (創業の動機) with 60-char splitting..."
-                )
                 # 改行を削除して1つの文字列にする
                 text = content.replace("\n", "")
-                print(f"[DEBUG] Total length: {len(text)} chars")
 
                 # 60文字ごとに分割（最大6行）
                 max_rows = 6
@@ -1640,22 +1596,12 @@ async def download_plan_excel(
                     row_num = 7 + idx  # B7, B8, B9, B10, B11, B12
 
                     sheet[f"B{row_num}"].value = line_text
-                    print(
-                        f"[DEBUG]   ✓ Wrote to B{row_num}: '{line_text[:40]}...' ({len(line_text)} chars)"
-                    )
 
-                print(
-                    f"[DEBUG] ✓ Successfully processed motivation in {min((len(text) + char_limit - 1) // char_limit, max_rows)} rows"
-                )
                 continue
 
             # 「経営者の略歴等」は特殊処理（略歴と資格・許認可欄を分けて転記）
             if key == "background":
-                print(
-                    f"[DEBUG] Processing background (略歴) with special formatting..."
-                )
                 lines = content.strip().split("\n")
-                print(f"[DEBUG] Found {len(lines)} lines in background")
 
                 # 略歴行と特殊フィールドに振り分け
                 history_lines = []
@@ -1695,33 +1641,20 @@ async def download_plan_excel(
 
                     if year_month:
                         sheet[f"B{row_num}"].value = year_month
-                        print(f"[DEBUG]   ✓ Wrote year/month to B{row_num}: '{year_month}'")
                     if content_text:
                         sheet[f"H{row_num}"].value = content_text
-                        print(f"[DEBUG]   ✓ Wrote content to H{row_num}: '{content_text[:50]}'")
 
-                # 取得資格 → P22（ラベルB22の右側、括弧内の入力欄）
                 if qualification_text:
                     sheet["P22"].value = qualification_text
-                    print(f"[DEBUG]   ✓ Wrote 取得資格 to P22: '{qualification_text[:50]}'")
-
-                # 許認可 → P23
                 if permit_text:
                     sheet["P23"].value = permit_text
-                    print(f"[DEBUG]   ✓ Wrote 許認可 to P23: '{permit_text[:50]}'")
-
-                # 知的財産権等 → P24
                 if ip_text:
                     sheet["P24"].value = ip_text
-                    print(f"[DEBUG]   ✓ Wrote 知的財産権等 to P24: '{ip_text[:50]}'")
 
-                print("[DEBUG] ✓ Successfully processed background")
                 continue
 
             # 「取扱商品・サービス」は複数セルに振り分けて転記
             if key == "service":
-                print(f"[DEBUG] Processing service:\n{content[:400]}")
-
                 # セクション境界キーワード: (section_name, pattern)
                 _SERVICE_SECTIONS = [
                     ("products",    r"取扱商品.*サービス.*内容"),
@@ -1758,7 +1691,6 @@ async def download_plan_excel(
 
                     if matched_section:
                         current_section = matched_section
-                        print(f"[DEBUG]   → section={current_section}")
                         if not after_header:
                             continue
                         # ヘッダー同行に内容がある場合はその内容で処理続行
@@ -1790,12 +1722,6 @@ async def download_plan_excel(
                     elif current_section == "market":
                         market_lines.append(line)
 
-                print(
-                    f"[DEBUG] service sections: desc={len(description_lines)}, "
-                    f"prod={len(products)}, sales={len(sales_point_lines)}, "
-                    f"target={len(target_lines)}, market={len(market_lines)}"
-                )
-
                 # 事業内容 → H26, H27（50文字ごとに折り返し）
                 def _wrap50(lines, width=50):
                     result = []
@@ -1812,39 +1738,36 @@ async def download_plan_excel(
                     sheet["H26"].value = wrapped_desc[0]
                     if len(wrapped_desc) > 1:
                         sheet["H27"].value = "\n".join(wrapped_desc[1:3])
-                    print(f"[DEBUG]   ✓ description → H26/H27 ({len(wrapped_desc)} wrapped lines)")
 
                 # ①②③ → I28/I29/I30、シェア% → AJ28/AJ29/AJ30
                 for idx, (item_text, share_pct) in enumerate(products[:3]):
                     row_num = 28 + idx
                     if item_text:
                         sheet[f"I{row_num}"].value = item_text
-                        print(f"[DEBUG]   ✓ product → I{row_num}: '{item_text[:50]}'")
                     if share_pct:
                         sheet[f"AJ{row_num}"].value = share_pct
 
-                # セールスポイント → H33, H34, H35（超過分は最終行に結合）
+                # セールスポイント → H33, H34, H35（50文字折り返し・超過分は最終行に結合）
+                wrapped_sales = _wrap50(sales_point_lines)
                 for idx in range(3):
-                    if idx < len(sales_point_lines):
-                        val = "\n".join(sales_point_lines[idx:]) if idx == 2 else sales_point_lines[idx]
+                    if idx < len(wrapped_sales):
+                        val = "\n".join(wrapped_sales[idx:]) if idx == 2 else wrapped_sales[idx]
                         sheet[f"H{33 + idx}"].value = val
-                        print(f"[DEBUG]   ✓ sales_point → H{33 + idx}")
 
-                # 販売ターゲット・販売戦略 → H36, H37, H38
+                # 販売ターゲット・販売戦略 → H36, H37, H38（50文字折り返し）
+                wrapped_target = _wrap50(target_lines)
                 for idx in range(3):
-                    if idx < len(target_lines):
-                        val = "\n".join(target_lines[idx:]) if idx == 2 else target_lines[idx]
+                    if idx < len(wrapped_target):
+                        val = "\n".join(wrapped_target[idx:]) if idx == 2 else wrapped_target[idx]
                         sheet[f"H{36 + idx}"].value = val
-                        print(f"[DEBUG]   ✓ target → H{36 + idx}")
 
-                # 競合・市場 → H39, H40, H41
+                # 競合・市場 → H39, H40, H41（50文字折り返し）
+                wrapped_market = _wrap50(market_lines)
                 for idx in range(3):
-                    if idx < len(market_lines):
-                        val = "\n".join(market_lines[idx:]) if idx == 2 else market_lines[idx]
+                    if idx < len(wrapped_market):
+                        val = "\n".join(wrapped_market[idx:]) if idx == 2 else wrapped_market[idx]
                         sheet[f"H{39 + idx}"].value = val
-                        print(f"[DEBUG]   ✓ market → H{39 + idx}")
 
-                print("[DEBUG] ✓ Successfully processed service")
                 continue
 
             # その他のセクションは通常通り処理
@@ -1852,16 +1775,10 @@ async def download_plan_excel(
             if cell_addr:
                 try:
                     sheet[cell_addr].value = content
-                    print(
-                        f"[DEBUG] ✓ Successfully wrote {key} ({len(content)} chars) to {cell_addr}"
-                    )
-                    print(f"[DEBUG]   Preview: '{content[:80]}...'")
                 except Exception as e:
                     print(f"[ERROR] ✗ Could not write {key} to cell {cell_addr}: {e}")
             else:
                 print(f"[WARNING] No cell mapping found for {key}")
-        else:
-            print(f"[DEBUG] Skipping {key} (no content)")
 
     # メモリ上のバイナリとして保存 (Excel)
     excel_output = BytesIO()
@@ -1889,9 +1806,6 @@ async def download_plan_excel(
     industry_type = data.get("industry_type")
     if industry_type and industry_type in industry_pdf_map:
         pdf_filename = industry_pdf_map[industry_type]
-        print(
-            f"[DEBUG] Using industry type from session: {industry_type} -> {pdf_filename}"
-        )
     else:
         # 業種タイプが保存されていない場合はエラー
         print(
@@ -1910,14 +1824,10 @@ async def download_plan_excel(
         # Add PDF if found
         if pdf_filename:
             pdf_path = examples_dir / pdf_filename
-            print(f"[DEBUG] Looking for PDF at: {pdf_path}")
             if pdf_path.exists():
                 zf.write(pdf_path, arcname="創業計画書記入例.pdf")
             else:
                 print(f"[WARNING] PDF file not found: {pdf_path}")
-        else:
-            print("[DEBUG] No matching industry found for PDF example.")
-
     zip_output.seek(0)
     zip_filename = f"創業計画書一式_{session_id[:8]}.zip"
     # URLエンコードしたファイル名をRFC 5987形式で指定
