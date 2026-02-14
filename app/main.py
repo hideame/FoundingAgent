@@ -578,6 +578,8 @@ async def start_chat(
 async def approve_draft(
     request: Request,
     task_id: str = Form(...),
+    draft_content: str = Form(default=None),  # 表示時に変換済みのドラフト内容
+    skip_verification: bool = Form(default=False),  # 記入例検証をスキップするフラグ
     session_id: str | None = Cookie(default=None),
     db: AsyncSession = Depends(get_db),
 ):
@@ -626,29 +628,111 @@ async def approve_draft(
         f"[DEBUG] Last AI response preview: {last_ai_response[:200] if last_ai_response else 'None'}"
     )
 
-    # ドラフト内容を抽出
-    draft_content = None
-    if last_ai_response:
-        draft_content = extract_single_section_from_response(last_ai_response, task_id)
-
-    if not draft_content:
-        print(f"[WARNING] Could not extract draft content for task {task_id}")
-        # フォールバック: 直前のAI応答全体を使用
+    # ドラフト内容を取得
+    # 優先: フォームから渡された表示済み内容（和暦変換済み）をそのまま使用
+    if draft_content and draft_content.strip():
+        draft_content = draft_content.strip()
+        print(f"[DEBUG] Using pre-converted draft from form: {draft_content[:100]}")
+    else:
+        # フォールバック: チャット履歴からドラフト内容を抽出して変換
+        print("[WARNING] No draft_content from form, extracting from chat history")
+        draft_content = None
         if last_ai_response:
-            # マーカーを除去して使用
+            draft_content = extract_single_section_from_response(last_ai_response, task_id)
+        if not draft_content and last_ai_response:
             draft_content = (
                 last_ai_response.replace("[[CONTENT_START]]", "")
                 .replace("[[CONTENT_END]]", "")
                 .replace("[[DRAFT_PROPOSED]]", "")
                 .strip()
             )
+        # フォールバック時のみ和暦変換を適用
+        if draft_content and task_id == "background":
+            draft_content = convert_western_to_wareki(draft_content)
+            print("[DEBUG] 和暦変換を適用しました（background・フォールバック）")
 
-    # background（経営者の略歴等）は西暦→和暦に変換
-    if draft_content and task_id == "background":
-        converted = convert_western_to_wareki(draft_content)
-        if converted != draft_content:
-            print("[DEBUG] 和暦変換を適用しました（background）")
-            draft_content = converted
+    # --- 記入例との比較検証 ---
+    # 前回の検証でフィードバックを表示済みかどうかをCookieで判定
+    verification_flagged = request.cookies.get(f"vf_{task_id}")
+    industry_type_for_verify = session_data.get("industry_type") if session_data else None
+    if not skip_verification and draft_content and industry_type_for_verify:
+        current_example = await get_section_example(db, industry_type_for_verify, task_id)
+        if current_example:
+            import html as _html
+            escaped_draft = _html.escape(draft_content, quote=True)
+            section_label = SECTION_DISPLAY_NAMES.get(task_id, task_id)
+            print(f"[DEBUG] セクション検証開始: {section_label} (flagged={bool(verification_flagged)})")
+            section_verification = await gemini_service.verify_section_draft(
+                section_label, draft_content, current_example
+            )
+            if section_verification.get("has_issues"):
+                # 問題あり → フィードバック + 「このままOKにする」ボタン
+                # Cookie フラグを立てて「ブラッシュアップ中」と記憶する
+                feedback_text = section_verification.get("feedback", "")
+                # AIがMarkdownを返した場合に備えてHTMLタグに変換
+                feedback_text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", feedback_text)
+                print(f"[DEBUG] 検証で問題を検出: {feedback_text}")
+                early_user_msg_html = templates.get_template("components/message.html").render(
+                    {"request": request, "message": "この内容でOKです", "is_user": True}
+                )
+                feedback_msg = (
+                    f"記入例と比較したところ、改善できる点が見つかりました。\n\n"
+                    f"{feedback_text}\n\n"
+                    f"改善したい場合はチャットでご相談ください。"
+                    f"このまま進める場合は下のボタンを押してください。"
+                )
+                ai_feedback_html = templates.get_template("components/message.html").render(
+                    {"request": request, "message": feedback_msg, "is_user": False}
+                )
+                force_ok_button = f"""<div class="flex justify-start ml-12 mb-4">
+  <form>
+    <input type="hidden" name="task_id" value="{task_id}">
+    <input type="hidden" name="draft_content" value="{escaped_draft}">
+    <input type="hidden" name="skip_verification" value="true">
+    <button hx-post="/chat/approve_draft"
+            hx-target="#chat-history"
+            hx-swap="beforeend"
+            hx-include="closest form"
+            class="px-4 py-2 bg-slate-500 text-white text-sm rounded hover:bg-slate-600 shadow-sm font-medium">
+      このままOKにする →
+    </button>
+  </form>
+</div>"""
+                resp = HTMLResponse(content=early_user_msg_html + ai_feedback_html + force_ok_button)
+                resp.set_cookie(key="session_id", value=session_id)
+                # ブラッシュアップ中フラグをCookieにセット（1時間有効）
+                resp.set_cookie(key=f"vf_{task_id}", value="1", max_age=3600, httponly=True)
+                return resp
+            elif verification_flagged:
+                # ブラッシュアップ後に再検証してOKだった場合でも自動進行しない
+                # → 明示的な「次のセクションへ」ボタンを表示して確認を求める
+                print(f"[DEBUG] 改善後の再検証でOK: {task_id}")
+                early_user_msg_html = templates.get_template("components/message.html").render(
+                    {"request": request, "message": "この内容でOKです", "is_user": True}
+                )
+                ok_msg = "内容が改善されました。記入例と比較して問題は見つかりませんでした。\n\nこのまま次のセクションへ進む場合は下のボタンを押してください。"
+                ai_ok_html = templates.get_template("components/message.html").render(
+                    {"request": request, "message": ok_msg, "is_user": False}
+                )
+                advance_button = f"""<div class="flex justify-start ml-12 mb-4">
+  <form>
+    <input type="hidden" name="task_id" value="{task_id}">
+    <input type="hidden" name="draft_content" value="{escaped_draft}">
+    <input type="hidden" name="skip_verification" value="true">
+    <button hx-post="/chat/approve_draft"
+            hx-target="#chat-history"
+            hx-swap="beforeend"
+            hx-include="closest form"
+            class="px-4 py-2 bg-green-600 text-white text-sm rounded hover:bg-green-700 shadow-sm font-medium">
+      次のセクションへ進む →
+    </button>
+  </form>
+</div>"""
+                resp = HTMLResponse(content=early_user_msg_html + ai_ok_html + advance_button)
+                resp.set_cookie(key="session_id", value=session_id)
+                # ブラッシュアップフラグを削除（次のセクションへ進む前にクリア）
+                resp.delete_cookie(key=f"vf_{task_id}")
+                return resp
 
     # タスクを完了状態に更新
     task_found = False
@@ -688,49 +772,66 @@ async def approve_draft(
         {"request": request, "message": "この内容でOKです", "is_user": True}
     )
 
-    # 次のセクションの記入例をDBから取得してAIメッセージに添付
+    # 次のセクションの記入例をDBから取得
+    # ※AIへのメッセージには含めず、HTMLカードとして直接表示する
     industry_type = session_data.get("industry_type") if session_data else None
-    ai_ok_message = "この内容でOKです。"
+    # 次のセクションをAIに明示して指定（AIが独自に順番を判断してスキップするのを防ぐ）
+    if next_task:
+        next_section_name = SECTION_DISPLAY_NAMES.get(next_task["id"], next_task["title"])
+        ai_ok_message = f"この内容でOKです。次のセクションは「{next_section_name}」です。このセクションについてヒアリングを開始してください。"
+    else:
+        ai_ok_message = "この内容でOKです。すべてのセクションが完了しました。"
+    next_example_html = ""
     if next_task and industry_type:
         next_example = await get_section_example(db, industry_type, next_task["id"])
         if next_example:
             section_name = SECTION_DISPLAY_NAMES.get(next_task["id"], next_task["title"])
-            ai_ok_message += f"\n\n【{section_name} の記入例（参考）】\n{next_example}"
-            print(f"[DEBUG] 記入例を添付: {next_task['id']} ({industry_type})")
+            industry_label = INDUSTRY_DISPLAY_NAMES.get(industry_type, industry_type)
+            import html as html_module
+            escaped_example = html_module.escape(next_example).replace("\n", "<br>")
+            next_example_html = f"""<div class="flex justify-start my-2">
+  <div class="bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg max-w-2xl text-sm ml-12">
+    <div class="font-semibold text-amber-800 mb-2">📋 {section_name} の記入例（{industry_label}の場合）</div>
+    <div class="text-gray-700 text-xs leading-relaxed">{escaped_example}</div>
+  </div>
+</div>"""
+            print(f"[DEBUG] 記入例HTMLを生成: {next_task['id']} ({industry_type})")
 
-    # AIに「この内容でOKです」を伝えて、次のタスクの質問を生成させる
-    ai_next_response = await gemini_service.generate_response(
-        session_id, ai_ok_message
-    )
+    # 全セクション完了の場合はAI呼び出しをスキップ（AIが[[DRAFT_PROPOSED]]を含む余計な応答を返すのを防ぐ）
+    if next_task:
+        # 次のセクションがある場合のみAIを呼び出して次の質問を生成させる
+        ai_next_response = await gemini_service.generate_response(
+            session_id, ai_ok_message
+        )
 
-    # マーカーとコンテンツの削除処理
-    import re
+        # マーカーとコンテンツの削除処理
+        # [[CONTENT_START]] ~ [[CONTENT_END]] の部分を削除（承認済みコンテンツは再表示不要）
+        ai_next_response = re.sub(
+            r"\[\[CONTENT_START\]\].*?\[\[CONTENT_END\]\]",
+            "",
+            ai_next_response,
+            flags=re.DOTALL,
+        )
 
-    # [[CONTENT_START]] ~ [[CONTENT_END]] の部分を削除（承認済みコンテンツは再表示不要）
-    ai_next_response = re.sub(
-        r"\[\[CONTENT_START\]\].*?\[\[CONTENT_END\]\]",
-        "",
-        ai_next_response,
-        flags=re.DOTALL,
-    )
+        # [[COMPLETED:xxx]] マーカーを削除
+        ai_next_response = re.sub(r"\[\[COMPLETED:[a-z_]+\]\]", "", ai_next_response)
+        # [[DRAFT_PROPOSED]] マーカーを削除（完了メッセージに誤って含まれる場合）
+        ai_next_response = re.sub(r"\[\[DRAFT_PROPOSED\]\]", "", ai_next_response)
 
-    # [[COMPLETED:xxx]] マーカーを削除
-    ai_next_response = re.sub(r"\[\[COMPLETED:[a-z_]+\]\]", "", ai_next_response)
+        # 過剰な空白・改行を整理
+        ai_next_response = re.sub(r"\n{3,}", "\n\n", ai_next_response)
+        ai_next_response = ai_next_response.strip()
 
-    # 過剰な空白・改行を整理
-    ai_next_response = re.sub(r"\n{3,}", "\n\n", ai_next_response)
-    ai_next_response = ai_next_response.strip()
-
-    # フォールバック: Geminiが適切な応答を返さない場合
-    if not ai_next_response or len(ai_next_response.strip()) < 20:
-        if next_task:
+        # フォールバック: Geminiが適切な応答を返さない場合
+        if not ai_next_response or len(ai_next_response.strip()) < 20:
             ai_next_response = f"承認ありがとうございます。\n\nそれでは次に、「{next_task['title']}」についてお伺いします。\n\n{next_task['desc']}\n\nどのような内容でしょうか？"
-        else:
-            ai_next_response = "承認ありがとうございます。\n\nすべての項目が完了しました！左側の「計画書を確認・編集」から内容を確認し、必要に応じて編集してください。"
 
-    ai_msg_html = templates.get_template("components/message.html").render(
-        {"request": request, "message": ai_next_response, "is_user": False}
-    )
+        ai_msg_html = templates.get_template("components/message.html").render(
+            {"request": request, "message": ai_next_response, "is_user": False}
+        )
+    else:
+        # 全セクション完了時はAIを呼ばずメッセージも表示しない
+        ai_msg_html = ""
 
     # チェックボックス更新用のOOB HTML
     task_update_html = f"""
@@ -742,8 +843,22 @@ async def approve_draft(
            hx-swap-oob="true">
     """
 
-    response = HTMLResponse(content=user_msg_html + ai_msg_html + task_update_html)
+    # 全セクション完了時の案内バナー
+    completion_banner_html = ""
+    if not next_task:
+        completion_banner_html = """
+<div class="flex justify-center my-4">
+  <div class="bg-indigo-50 border border-indigo-300 px-6 py-4 rounded-lg max-w-xl text-center shadow-sm">
+    <div class="text-indigo-700 font-bold text-base mb-1">🎉 全セクションの入力が完了しました！</div>
+    <div class="text-gray-600 text-sm">左側の <span class="font-semibold text-indigo-600">「創業計画書案を作成する」</span> ボタンをクリックしてください。</div>
+  </div>
+</div>
+"""
+
+    response = HTMLResponse(content=user_msg_html + next_example_html + ai_msg_html + completion_banner_html + task_update_html)
     response.set_cookie(key="session_id", value=session_id)
+    # ブラッシュアップフラグが残っている場合はクリア（このセクションは正常に完了）
+    response.delete_cookie(key=f"vf_{task_id}")
 
     return response
 
@@ -801,11 +916,12 @@ async def select_industry(
     industry_label = industry_label_mapping.get(industry, industry)
     ai_message = f"「{industry_label}」を選択しました。"
 
-    # 最初のセクション（創業の動機）の記入例をDBから取得してメッセージに添付
+    # 最初のセクション（創業の動機）の記入例をDBから取得
+    # ※AIへのメッセージには含めず、テンプレートに渡してHTMLとして直接表示する
+    #   （AIはシステムプロンプトで全記入例を把握済み）
     first_example = await get_section_example(db, industry_type, "motivation")
-    if first_example:
-        section_name = SECTION_DISPLAY_NAMES.get("motivation", "1. 創業の動機")
-        ai_message += f"\n\n【{section_name} の記入例（{industry_label}の場合）】\n{first_example}"
+    section_name = SECTION_DISPLAY_NAMES.get("motivation", "1. 創業の動機")
+    example_label = f"{section_name} の記入例（{industry_label}の場合）" if first_example else None
 
     ai_response_text = await gemini_service.generate_response(session_id, ai_message)
 
@@ -821,6 +937,8 @@ async def select_industry(
             "message": ai_response_text,
             "is_user": False,
             "show_industry_selection": f"{industry}",  # 選択された業種番号をユーザーメッセージとして表示
+            "example_text": first_example,
+            "example_label": example_label,
         },
     )
 
@@ -939,23 +1057,44 @@ async def chat_message(
                 break
 
         if current_task_id:
+            # backgroundセクション（経営者の略歴等）のドラフト表示時に西暦→和暦変換
+            if current_task_id == "background":
+                ai_response_text = convert_western_to_wareki(ai_response_text)
+
+            # 表示済み（変換済み）のドラフト内容を抽出してhidden inputに埋め込む
+            # → approve_draftがそのままDBに保存するため、二重変換不要
+            import html as _html
+            content_match = re.search(
+                r"\[\[CONTENT_START\]\](.*?)\[\[CONTENT_END\]\]",
+                ai_response_text,
+                re.DOTALL,
+            )
+            pending_draft = content_match.group(1).strip() if content_match else ""
+            escaped_draft = _html.escape(pending_draft, quote=True)
+
             draft_buttons_html = f"""
-            <div class="flex gap-4 mt-2 mb-4 ml-12">
-                <button hx-post="/chat/approve_draft"
-                        hx-vals='{{"task_id": "{current_task_id}"}}'
-                        hx-target="#chat-history"
-                        hx-swap="beforeend"
-                        class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 font-bold transition-colors">
-                    OK(次の項目へ)
-                </button>
-                <button hx-post="/chat/message"
-                        hx-vals='{{"user_message": "文面を修正したいです"}}'
-                        hx-target="#chat-history"
-                        hx-swap="beforeend"
-                        class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors">
-                    文面を修正する
-                </button>
-            </div>
+            <form>
+                <input type="hidden" name="task_id" value="{current_task_id}">
+                <input type="hidden" name="draft_content" value="{escaped_draft}">
+                <div class="flex gap-4 mt-2 mb-4 ml-12">
+                    <button type="button"
+                            hx-post="/chat/approve_draft"
+                            hx-include="closest form"
+                            hx-target="#chat-history"
+                            hx-swap="beforeend"
+                            class="px-4 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 font-bold transition-colors">
+                        OK(次の項目へ)
+                    </button>
+                    <button type="button"
+                            hx-post="/chat/message"
+                            hx-vals='{{"user_message": "文面を修正したいです"}}'
+                            hx-target="#chat-history"
+                            hx-swap="beforeend"
+                            class="px-4 py-2 bg-white border border-gray-300 text-gray-700 rounded-lg text-sm hover:bg-gray-50 transition-colors">
+                        文面を修正する
+                    </button>
+                </div>
+            </form>
             """
             print(f"[DEBUG] Draft buttons created for task: {current_task_id}")
         else:
@@ -1066,9 +1205,18 @@ async def edit_plan(
         }
         print("[DEBUG] /plan/edit - No sections found, using empty template")
 
+    # 業種に応じた記入例をDBから取得
+    industry_type = data.get("industry_type") if data else None
+    examples = {}
+    if industry_type:
+        for section_key in SECTION_ORDER:
+            example = await get_section_example(db, industry_type, section_key)
+            if example:
+                examples[section_key] = example
+
     return templates.TemplateResponse(
         "components/plan_editor.html",
-        {"request": request, "sections": sections},
+        {"request": request, "sections": sections, "examples": examples},
     )
 
 
@@ -1302,6 +1450,10 @@ async def generate_plan(
             db, session_id, saved_tasks, saved_history, sections=sections
         )
 
+    # 生成した計画書をAIで自動検証（チャットセッションとは独立した単発の検証）
+    verification = await gemini_service.verify_business_plan(sections)
+    print(f"[DEBUG] /plan/generate - verification status: {verification.get('status')}")
+
     # ステップの状態を更新 (Conceptual: 1->Completed, 2->Current)
     current_steps = [s.copy() for s in ROADMAP_STEPS]
     current_steps[0]["status"] = "completed"
@@ -1320,7 +1472,12 @@ async def generate_plan(
 
     return templates.TemplateResponse(
         "components/plan_viewer.html",
-        {"request": request, "plan_text": plan_text, "stepper_oob": stepper_html},
+        {
+            "request": request,
+            "plan_text": plan_text,
+            "stepper_oob": stepper_html,
+            "verification": verification,
+        },
     )
 
 
@@ -1492,7 +1649,7 @@ async def download_plan_excel(
                 )
                 continue
 
-            # 「経営者の略歴等」は特殊処理（複数行に分割して転記）
+            # 「経営者の略歴等」は特殊処理（略歴と資格・許認可欄を分けて転記）
             if key == "background":
                 print(
                     f"[DEBUG] Processing background (略歴) with special formatting..."
@@ -1500,19 +1657,30 @@ async def download_plan_excel(
                 lines = content.strip().split("\n")
                 print(f"[DEBUG] Found {len(lines)} lines in background")
 
-                # 最大6行まで処理（B13/H13, B14/H14, B15/H15, B16/H16, B17/H17, B18/H18）
-                for idx, line in enumerate(lines[:6]):
-                    line = line.strip()
-                    if not line:
-                        continue
+                # 略歴行と特殊フィールドに振り分け
+                history_lines = []
+                qualification_text = ""  # 取得資格
+                permit_text = ""         # 許認可
+                ip_text = ""             # 知的財産権等
 
-                    row_num = 13 + idx  # 13, 14, 15, 16, 17, 18
+                for line in lines:
+                    line_s = line.strip()
+                    if line_s.startswith("取得資格："):
+                        qualification_text = line_s[len("取得資格："):]
+                    elif line_s.startswith("許認可："):
+                        permit_text = line_s[len("許認可："):]
+                    elif line_s.startswith("知的財産権等："):
+                        ip_text = line_s[len("知的財産権等："):]
+                    elif line_s.startswith("過去の事業経験："):
+                        pass  # チェックボックス形式のため書き込み対象外
+                    elif line_s:
+                        history_lines.append(line_s)
 
-                    # 年月と内容を分離（例: "・平成XX年3月 〇〇大学工学部 卒業"）
-                    # 「・」や「-」で始まる場合は除去
+                # 略歴行（最大4行: rows 13-16, B: 年月, H: 内容）
+                for idx, line in enumerate(history_lines[:4]):
                     line = line.lstrip("・-− ")
+                    row_num = 13 + idx
 
-                    # 年月部分を抽出（例: "平成XX年3月" または "20XX年X月"）
                     year_month_match = re.match(
                         r"^([0-9]{4}年[0-9]{1,2}月|[平成令和昭和]+[0-9元]{1,2}年[0-9]{1,2}月)",
                         line,
@@ -1520,28 +1688,163 @@ async def download_plan_excel(
 
                     if year_month_match:
                         year_month = year_month_match.group(1)
-                        content_text = line[len(year_month) :].strip()
+                        content_text = line[len(year_month):].strip()
                     else:
-                        # 年月が見つからない場合は、全体を内容として扱う
                         year_month = ""
                         content_text = line
 
-                    # B列に年月、H列に内容を書き込み
                     if year_month:
                         sheet[f"B{row_num}"].value = year_month
-                        print(
-                            f"[DEBUG]   ✓ Wrote year/month to B{row_num}: '{year_month}'"
-                        )
-
+                        print(f"[DEBUG]   ✓ Wrote year/month to B{row_num}: '{year_month}'")
                     if content_text:
                         sheet[f"H{row_num}"].value = content_text
-                        print(
-                            f"[DEBUG]   ✓ Wrote content to H{row_num}: '{content_text[:50]}...'"
-                        )
+                        print(f"[DEBUG]   ✓ Wrote content to H{row_num}: '{content_text[:50]}'")
+
+                # 取得資格 → P22（ラベルB22の右側、括弧内の入力欄）
+                if qualification_text:
+                    sheet["P22"].value = qualification_text
+                    print(f"[DEBUG]   ✓ Wrote 取得資格 to P22: '{qualification_text[:50]}'")
+
+                # 許認可 → P23
+                if permit_text:
+                    sheet["P23"].value = permit_text
+                    print(f"[DEBUG]   ✓ Wrote 許認可 to P23: '{permit_text[:50]}'")
+
+                # 知的財産権等 → P24
+                if ip_text:
+                    sheet["P24"].value = ip_text
+                    print(f"[DEBUG]   ✓ Wrote 知的財産権等 to P24: '{ip_text[:50]}'")
+
+                print("[DEBUG] ✓ Successfully processed background")
+                continue
+
+            # 「取扱商品・サービス」は複数セルに振り分けて転記
+            if key == "service":
+                print(f"[DEBUG] Processing service:\n{content[:400]}")
+
+                # セクション境界キーワード: (section_name, pattern)
+                _SERVICE_SECTIONS = [
+                    ("products",    r"取扱商品.*サービス.*内容"),
+                    ("sales_point", r"セールスポイント|自社の強み"),
+                    ("target",      r"販売ターゲット|販売戦略|集客方法"),
+                    ("market",      r"競合.{0,5}市場|自社を取り巻く"),
+                ]
+
+                current_section = "description"
+                description_lines = []
+                products = []        # (説明文, 売上シェア%)
+                sales_point_lines = []
+                target_lines = []
+                market_lines = []
+
+                for raw_line in content.strip().split("\n"):
+                    line = raw_line.strip()
+                    if not line:
+                        continue
+
+                    # セクション遷移キーワードを検出
+                    # ヘッダーの後ろに内容が続く場合（"：内容"）も取り出す
+                    matched_section = None
+                    after_header = ""
+                    for section_name, pattern in _SERVICE_SECTIONS:
+                        m = re.search(pattern, line)
+                        if m:
+                            matched_section = section_name
+                            # "：" or ":" 以降の文字列を取り出す
+                            colon_m = re.search(r"[：:]\s*(.+)$", line[m.end():])
+                            if colon_m:
+                                after_header = colon_m.group(1).strip()
+                            break
+
+                    if matched_section:
+                        current_section = matched_section
+                        print(f"[DEBUG]   → section={current_section}")
+                        if not after_header:
+                            continue
+                        # ヘッダー同行に内容がある場合はその内容で処理続行
+                        line = after_header
+
+                    # セクションに応じて振り分け
+                    if current_section == "description":
+                        line_clean = re.sub(r"^事業内容[：:]\s*", "", line)
+                        if line_clean:
+                            description_lines.append(line_clean)
+                    elif current_section == "products":
+                        m = re.match(r"^[①②③１２３123]\s*(.*)", line)
+                        if m:
+                            item_text = m.group(1).strip()
+                            share_m = re.search(r"[（(]売上シェア\s*(\d+)\s*[%％][）)]", item_text)
+                            if share_m:
+                                share_pct = share_m.group(1)
+                                item_text = item_text[:share_m.start()].strip()
+                            else:
+                                share_pct = ""
+                            products.append((item_text, share_pct))
+                        elif re.match(r"^客単価[：:]", line):
+                            val = re.sub(r"^客単価[：:]\s*", "", line)
+                            sheet["H31"].value = val
+                    elif current_section == "sales_point":
+                        sales_point_lines.append(line)
+                    elif current_section == "target":
+                        target_lines.append(line)
+                    elif current_section == "market":
+                        market_lines.append(line)
 
                 print(
-                    f"[DEBUG] ✓ Successfully processed background with {min(len(lines), 6)} rows"
+                    f"[DEBUG] service sections: desc={len(description_lines)}, "
+                    f"prod={len(products)}, sales={len(sales_point_lines)}, "
+                    f"target={len(target_lines)}, market={len(market_lines)}"
                 )
+
+                # 事業内容 → H26, H27（50文字ごとに折り返し）
+                def _wrap50(lines, width=50):
+                    result = []
+                    for part in lines:
+                        while len(part) > width:
+                            result.append(part[:width])
+                            part = part[width:]
+                        if part:
+                            result.append(part)
+                    return result
+
+                wrapped_desc = _wrap50(description_lines)
+                if wrapped_desc:
+                    sheet["H26"].value = wrapped_desc[0]
+                    if len(wrapped_desc) > 1:
+                        sheet["H27"].value = "\n".join(wrapped_desc[1:3])
+                    print(f"[DEBUG]   ✓ description → H26/H27 ({len(wrapped_desc)} wrapped lines)")
+
+                # ①②③ → I28/I29/I30、シェア% → AJ28/AJ29/AJ30
+                for idx, (item_text, share_pct) in enumerate(products[:3]):
+                    row_num = 28 + idx
+                    if item_text:
+                        sheet[f"I{row_num}"].value = item_text
+                        print(f"[DEBUG]   ✓ product → I{row_num}: '{item_text[:50]}'")
+                    if share_pct:
+                        sheet[f"AJ{row_num}"].value = share_pct
+
+                # セールスポイント → H33, H34, H35（超過分は最終行に結合）
+                for idx in range(3):
+                    if idx < len(sales_point_lines):
+                        val = "\n".join(sales_point_lines[idx:]) if idx == 2 else sales_point_lines[idx]
+                        sheet[f"H{33 + idx}"].value = val
+                        print(f"[DEBUG]   ✓ sales_point → H{33 + idx}")
+
+                # 販売ターゲット・販売戦略 → H36, H37, H38
+                for idx in range(3):
+                    if idx < len(target_lines):
+                        val = "\n".join(target_lines[idx:]) if idx == 2 else target_lines[idx]
+                        sheet[f"H{36 + idx}"].value = val
+                        print(f"[DEBUG]   ✓ target → H{36 + idx}")
+
+                # 競合・市場 → H39, H40, H41
+                for idx in range(3):
+                    if idx < len(market_lines):
+                        val = "\n".join(market_lines[idx:]) if idx == 2 else market_lines[idx]
+                        sheet[f"H{39 + idx}"].value = val
+                        print(f"[DEBUG]   ✓ market → H{39 + idx}")
+
+                print("[DEBUG] ✓ Successfully processed service")
                 continue
 
             # その他のセクションは通常通り処理

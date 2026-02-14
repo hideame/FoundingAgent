@@ -111,7 +111,19 @@ source .venv/bin/activate
 pip install -r requirements.txt
 ```
 
-### 4. アプリケーションの起動
+### 4. 初回データ初期化
+
+アプリを一度起動してテーブルを作成してから、記入例データをシードします：
+
+```bash
+# テーブルを作成（SQLAlchemy create_all）
+python -c "import asyncio; from app.database import init_db; asyncio.run(init_db())"
+
+# 業種別の記入例データをDBに登録（初回のみ）
+python scripts/fix_all_examples.py
+```
+
+### 5. アプリケーションの起動
 
 ```bash
 # 開発サーバーを起動（ホットリロード有効）
@@ -119,81 +131,6 @@ uvicorn app.main:app --reload
 ```
 
 ブラウザで `http://localhost:8000` にアクセスしてください。
-
-## API ドキュメント（Swagger UI）
-
-FastAPIには自動生成されるAPI ドキュメントが組み込まれています。
-
-### Swagger UI（インタラクティブなAPI ドキュメント）
-
-アプリケーション起動後、以下のURLにアクセスしてください：
-
-```
-http://localhost:8000/docs
-```
-
-**主な機能:**
-- 📋 全APIエンドポイントの一覧表示
-- 🔍 各エンドポイントのリクエスト/レスポンススキーマ確認
-- 🧪 ブラウザから直接APIをテスト（Try it out機能）
-- 📥 リクエストボディのサンプル表示
-- 📤 レスポンスの例とステータスコード
-
-### ReDoc（読みやすいAPI ドキュメント）
-
-より読みやすいドキュメント形式が必要な場合：
-
-```
-http://localhost:8000/redoc
-```
-
-**特徴:**
-- 📖 3カラムレイアウトで見やすい
-- 🔎 検索機能付き
-- 📋 エンドポイントのグループ化表示
-
-### OpenAPI スキーマ（JSON）
-
-APIスキーマを直接取得する場合：
-
-```
-http://localhost:8000/openapi.json
-```
-
-このJSONファイルは、Postmanなどの外部ツールへのインポートにも使用できます。
-
-## データベース管理
-
-### テーブル構成
-
-- `sessions`: セッション管理
-- `business_plans`: 創業計画書の9項目データ
-- `chat_messages`: チャット履歴
-- `task_states`: タスク進捗状態
-
-### マイグレーション（Alembic）
-
-```bash
-# 初回マイグレーション環境の初期化
-alembic init alembic
-
-# マイグレーションファイルの自動生成
-alembic revision --autogenerate -m "Initial migration"
-
-# マイグレーション実行
-alembic upgrade head
-
-# ロールバック
-alembic downgrade -1
-```
-
-### データベースのリセット
-
-```bash
-# Docker Composeでデータベースを完全にリセット
-docker-compose down -v
-docker-compose up -d
-```
 
 ## テスト
 
@@ -239,6 +176,42 @@ pdoc app
 > **💡 使い分け**:
 > - **API利用者向け** → Swagger UI / ReDoc
 > - **開発者向け（コード理解）** → pdoc
+
+## データベース管理
+
+### テーブル構成
+
+- `sessions`: セッション管理
+- `business_plans`: 創業計画書の9項目データ
+- `chat_messages`: チャット履歴
+- `task_states`: タスク進捗状態
+
+### マイグレーション（Alembic）
+
+> **注意:** 初回セットアップに `alembic upgrade head` は使用しないでください。
+> 初回マイグレーションがテーブル作成ではなく `ALTER TABLE` のため、新規DBに実行するとエラーになります。
+> テーブル作成は `create_all()`（アプリ起動時に自動実行）で行います。
+
+以下のコマンドは、**モデル変更後に新しいマイグレーションファイルを作成・適用する**際に使用します：
+
+```bash
+# モデル変更後、マイグレーションファイルを自動生成
+alembic revision --autogenerate -m "Add new column"
+
+# マイグレーションを適用（既存DBへの差分適用）
+alembic upgrade head
+
+# ロールバック
+alembic downgrade -1
+```
+
+### データベースのリセット
+
+```bash
+# Docker Composeでデータベースを完全にリセット
+docker-compose down -v
+docker-compose up -d
+```
 
 ## プロジェクト構成
 

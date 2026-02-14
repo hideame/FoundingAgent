@@ -35,6 +35,12 @@
                   rows="5"
                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
                   placeholder="なぜこの事業を始めるのか、熱意と目的を記載してください">{{ sections.motivation or '' }}</textarea>
+        {% if examples.motivation %}
+        <div class="mt-3 bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg text-xs">
+          <div class="font-semibold text-amber-800 mb-1">📋 記入例</div>
+          <div class="text-gray-700 whitespace-pre-wrap leading-relaxed">{{ examples.motivation }}</div>
+        </div>
+        {% endif %}
       </div>
 
       <!-- 2. 経営者の略歴等 -->
@@ -50,6 +56,12 @@
                   rows="6"
                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
                   placeholder="これまでの経歴、担当業務、役職、身につけた技能などを記載してください">{{ sections.background or '' }}</textarea>
+        {% if examples.background %}
+        <div class="mt-3 bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg text-xs">
+          <div class="font-semibold text-amber-800 mb-1">📋 記入例</div>
+          <div class="text-gray-700 whitespace-pre-wrap leading-relaxed">{{ examples.background }}</div>
+        </div>
+        {% endif %}
       </div>
 
       <!-- 3. 取扱商品・サービス -->
@@ -65,6 +77,12 @@
                   rows="6"
                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
                   placeholder="取扱商品・サービスの内容とセールスポイントを記載してください">{{ sections.service or '' }}</textarea>
+        {% if examples.service %}
+        <div class="mt-3 bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg text-xs">
+          <div class="font-semibold text-amber-800 mb-1">📋 記入例</div>
+          <div class="text-gray-700 whitespace-pre-wrap leading-relaxed">{{ examples.service }}</div>
+        </div>
+        {% endif %}
       </div>
 
       <!-- 4. 従業員 -->
@@ -80,6 +98,12 @@
                   rows="3"
                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
                   placeholder="常勤役員、従業員（正社員・パート・アルバイト）の人数を記載してください">{{ sections.employees or '' }}</textarea>
+        {% if examples.employees %}
+        <div class="mt-3 bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg text-xs">
+          <div class="font-semibold text-amber-800 mb-1">📋 記入例</div>
+          <div class="text-gray-700 whitespace-pre-wrap leading-relaxed">{{ examples.employees }}</div>
+        </div>
+        {% endif %}
       </div>
 
       <!-- 5. 取引先・取引関係等 -->
@@ -95,6 +119,12 @@
                   rows="5"
                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
                   placeholder="販売先、仕入先、外注先、掛取引の条件などを記載してください">{{ sections.partners or '' }}</textarea>
+        {% if examples.partners %}
+        <div class="mt-3 bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg text-xs">
+          <div class="font-semibold text-amber-800 mb-1">📋 記入例</div>
+          <div class="text-gray-700 whitespace-pre-wrap leading-relaxed">{{ examples.partners }}</div>
+        </div>
+        {% endif %}
       </div>
 
       <!-- 6. 関連企業 -->
@@ -110,6 +140,12 @@
                   rows="3"
                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
                   placeholder="関連企業がある場合はその情報を記載してください。該当なしの場合は「該当なし」と記載してください">{{ sections.related_companies or '' }}</textarea>
+        {% if examples.related_companies %}
+        <div class="mt-3 bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg text-xs">
+          <div class="font-semibold text-amber-800 mb-1">📋 記入例</div>
+          <div class="text-gray-700 whitespace-pre-wrap leading-relaxed">{{ examples.related_companies }}</div>
+        </div>
+        {% endif %}
       </div>
 
       <!-- 7. お借入の状況 -->
@@ -125,6 +161,12 @@
                   rows="3"
                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
                   placeholder="住宅ローン、カードローン、その他の借入状況を記載してください。該当なしの場合は「該当なし」と記載してください">{{ sections.loans or '' }}</textarea>
+        {% if examples.loans %}
+        <div class="mt-3 bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg text-xs">
+          <div class="font-semibold text-amber-800 mb-1">📋 記入例</div>
+          <div class="text-gray-700 whitespace-pre-wrap leading-relaxed">{{ examples.loans }}</div>
+        </div>
+        {% endif %}
       </div>
 
       <!-- 8. 必要な資金と調達方法 -->
@@ -140,6 +182,12 @@
                   rows="6"
                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
                   placeholder="必要な資金の合計と内訳、調達方法（自己資金、借入金など）を記載してください">{{ sections.funds or '' }}</textarea>
+        {% if examples.funds %}
+        <div class="mt-3 bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg text-xs">
+          <div class="font-semibold text-amber-800 mb-1">📋 記入例</div>
+          <div class="text-gray-700 whitespace-pre-wrap leading-relaxed">{{ examples.funds }}</div>
+        </div>
+        {% endif %}
       </div>
 
       <!-- 9. 事業の見通し -->
@@ -155,6 +203,12 @@
                   rows="6"
                   class="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-serif text-gray-800 leading-relaxed"
                   placeholder="創業当初と軌道に乗った後の売上高、売上原価、経費、利益の見通しと根拠を記載してください">{{ sections.outlook or '' }}</textarea>
+        {% if examples.outlook %}
+        <div class="mt-3 bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg text-xs">
+          <div class="font-semibold text-amber-800 mb-1">📋 記入例</div>
+          <div class="text-gray-700 whitespace-pre-wrap leading-relaxed">{{ examples.outlook }}</div>
+        </div>
+        {% endif %}
       </div>
 
       <!-- 10. 自由記述欄 -->

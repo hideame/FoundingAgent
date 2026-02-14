@@ -1,8 +1,16 @@
 #!/bin/bash
 set -e
 
-echo "=== Alembicマイグレーションを実行 ==="
-alembic upgrade head
+echo "=== テーブルを作成（SQLAlchemy create_all）==="
+python -c "
+import asyncio
+from app.database import init_db
+asyncio.run(init_db())
+print('テーブル作成完了')
+"
+
+echo "=== Alembicをhead状態にスタンプ（マイグレーション済みとしてマーク）==="
+alembic stamp head
 
 echo "=== 記入例データをシード ==="
 python scripts/fix_all_examples.py
