@@ -5,9 +5,11 @@
 ## 機能
 
 - ✅ AI（Google Gemini）による対話形式の創業計画書作成支援
-- ✅ 9つのセクションに分けた段階的な計画書作成
+- ✅ 10項目に分けた段階的な計画書作成
+- ✅ AI検証による創業計画書のフィードバック（[重要]/[確認]マーカー付き）
 - ✅ 作成した計画書をExcel形式でダウンロード
 - ✅ 業種別の記入例PDF付きZIPダウンロード
+- ✅ 面談対策画面（ビジネスサポートプラザ案内）
 - ✅ MySQLデータベースによるセッション管理
 
 ## 技術スタック
@@ -185,6 +187,9 @@ docker-compose up -d
 
 ```
 FoundingAgent/
+├── alembic/                       # データベースマイグレーション
+│   ├── env.py
+│   └── versions/                  # マイグレーションファイル
 ├── app/
 │   ├── main.py                    # FastAPIアプリケーション
 │   ├── models.py                  # SQLAlchemyモデル
@@ -196,12 +201,25 @@ FoundingAgent/
 │   │   └── templates/
 │   │       ├── startup_plan_template.xlsx
 │   │       └── examples/          # 業種別記入例PDF
-│   └── templates/                 # Jinja2テンプレート
+│   └── templates/
+│       ├── index.html             # メインページ
+│       └── components/            # コンポーネントテンプレート
+│           ├── chat_interface.html
+│           ├── interview_prep.html    # 面談対策画面
+│           ├── plan_viewer.html
+│           ├── plan_editor.html
+│           └── stepper.html
+├── document/                      # プロジェクトドキュメント
+│   └── loan_flow.md              # 融資フロー説明
+├── scripts/                       # ユーティリティスクリプト
+│   └── fix_all_examples.py       # 記入例データシード
 ├── tests/                         # pytestテスト
-├── data/                          # JSONセッションデータ（旧）
+│   ├── conftest.py
+│   └── test_excel_export.py
+├── .env.example                   # 環境変数テンプレート
+├── CLAUDE.md                      # Claude Code用プロジェクト指示
 ├── docker-compose.yml             # MySQL環境定義
 ├── requirements.txt               # Python依存パッケージ
-├── .env.example                   # 環境変数テンプレート
 └── README.md
 ```
 
