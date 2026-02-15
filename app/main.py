@@ -95,7 +95,6 @@ ROADMAP_STEPS = [
     {"id": 1, "title": "構想・準備", "status": "current"},
     {"id": 2, "title": "創業計画書作成", "status": "upcoming"},
     {"id": 3, "title": "面談対策", "status": "upcoming"},
-    {"id": 4, "title": "融資実行", "status": "upcoming"},
 ]
 
 # 現在のフェーズ（創業計画書）のタスクリスト
@@ -2470,6 +2469,81 @@ async def download_plan_excel(
         zip_output,
         headers=headers,
         media_type="application/zip",
+    )
+
+
+@app.get(
+    "/interview-prep",
+    response_class=HTMLResponse,
+    summary="面談対策画面の表示",
+    description="""
+    創業計画書作成後の面談対策画面を表示します。
+    AI検証フィードバックと日本政策金融公庫ビジネスサポートプラザの案内を表示します。
+
+    ⚠️ **Swagger UIでの直接テストはできません**
+    - このエンドポイントはCookieによるセッション管理が必要です
+    """,
+)
+async def interview_prep(
+    request: Request,
+    session_id: str | None = Cookie(default=None),
+    db: AsyncSession = Depends(get_db),
+):
+    """
+    面談対策画面を表示します。
+
+    セッションに保存されている創業計画書を取得し、AI検証を実行して
+    フィードバックとビジネスサポートプラザの案内を表示します。
+
+    Args:
+        request (Request): FastAPIのリクエストオブジェクト
+        session_id (str | None): CookieセッションID
+        db (AsyncSession): データベースセッション
+
+    Returns:
+        TemplateResponse: 面談対策画面 `components/interview_prep.html`
+    """
+    if not session_id:
+        return HTMLResponse(
+            '<div class="flex items-center justify-center h-full text-red-500">セッションが見つかりません。</div>',
+            status_code=400,
+        )
+
+    # セッションデータを取得
+    current_data = await session_store.load_session(db, session_id)
+    if not current_data or not current_data.get("sections"):
+        return HTMLResponse(
+            '<div class="flex items-center justify-center h-full text-red-500">創業計画書が見つかりません。先に計画書を作成してください。</div>',
+            status_code=400,
+        )
+
+    sections = current_data["sections"]
+
+    # AI検証を実行（最新の状態で検証）
+    verification = await gemini_service.verify_business_plan(sections)
+
+    # ステッパーの状態を更新（面談対策フェーズに進める）
+    current_steps = [s.copy() for s in ROADMAP_STEPS]
+    current_steps[0]["status"] = "completed"  # 構想・準備
+    current_steps[1]["status"] = "completed"  # 創業計画書作成
+    current_steps[2]["status"] = "current"    # 面談対策
+
+    # ステッパーHTMLをOOB更新用にレンダリング
+    stepper_html = templates.get_template("components/stepper.html").render(
+        {"steps": current_steps}
+    )
+    stepper_html = stepper_html.replace(
+        '<nav aria-label="Progress" id="stepper-nav">',
+        '<nav aria-label="Progress" id="stepper-nav" hx-swap-oob="true">',
+    )
+
+    return templates.TemplateResponse(
+        "components/interview_prep.html",
+        {
+            "request": request,
+            "verification": verification,
+            "stepper_oob": stepper_html,
+        },
     )
 
 

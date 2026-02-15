@@ -145,38 +145,6 @@ pytest -v
 pytest tests/test_excel_export.py -v
 ```
 
-## ドキュメント
-
-このプロジェクトには2種類のドキュメントがあります：
-
-### 1. API ドキュメント（Swagger UI / ReDoc）
-
-**用途**: REST APIエンドポイントの仕様確認とテスト
-
-- **Swagger UI**: `http://localhost:8000/docs`（インタラクティブ）
-- **ReDoc**: `http://localhost:8000/redoc`（読みやすい）
-- **OpenAPI JSON**: `http://localhost:8000/openapi.json`（スキーマファイル）
-
-FastAPIが自動生成するため、追加の設定は不要です。
-
-### 2. コードドキュメント（pdoc）
-
-**用途**: Pythonコードの内部実装、クラス、関数の詳細説明
-
-```bash
-# コードドキュメントを生成（静的HTML）
-pdoc app -o docs
-
-# ドキュメントをブラウザでプレビュー（開発サーバー起動）
-pdoc app
-```
-
-生成されたHTMLは `docs/` ディレクトリに保存されます。
-
-> **💡 使い分け**:
-> - **API利用者向け** → Swagger UI / ReDoc
-> - **開発者向け（コード理解）** → pdoc
-
 ## データベース管理
 
 ### テーブル構成
@@ -238,15 +206,6 @@ FoundingAgent/
 ```
 
 ## 開発ガイド
-
-### VS Code タスク
-
-`.vscode/tasks.json`に定義されたタスク：
-
-- **Generate Docs**: pdocでドキュメント生成
-- **Preview Docs**: pdocドキュメントをブラウザでプレビュー
-
-`Cmd+Shift+P` → "Tasks: Run Task"から実行可能
 
 ### コーディング規約
 
