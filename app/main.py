@@ -1,6 +1,7 @@
 import re
 import uuid
 import zipfile
+from datetime import date
 from io import BytesIO
 from pathlib import Path
 
@@ -347,13 +348,27 @@ SELF_CHECK_ITEMS: dict[str, list[str]] = {
 }
 
 SECTION_ORDER = [
-    "motivation", "background", "service", "employees", "partners",
-    "related_companies", "loans", "funds", "outlook",
+    "motivation",
+    "background",
+    "service",
+    "employees",
+    "partners",
+    "related_companies",
+    "loans",
+    "funds",
+    "outlook",
 ]
 
 INDUSTRY_ORDER = [
-    "software", "restaurant", "beauty", "car_sales", "apparel",
-    "construction", "cram_school", "dentist", "care_service",
+    "software",
+    "restaurant",
+    "beauty",
+    "car_sales",
+    "apparel",
+    "construction",
+    "cram_school",
+    "dentist",
+    "care_service",
 ]
 
 
@@ -400,7 +415,7 @@ def convert_western_to_wareki(text: str) -> str:
         return wareki + (month_str or "")
 
     # 西暦4桁（1900〜2099）の年月表記を対象にする。直前が数字の場合は除外
-    pattern = r'(?<!\d)((?:19|20)\d{2})年((\d{1,2})月)?'
+    pattern = r"(?<!\d)((?:19|20)\d{2})年((\d{1,2})月)?"
     return re.sub(pattern, replace_match, text)
 
 
@@ -567,7 +582,9 @@ async def start_chat(
 
     # エージェントからの初期挨拶を生成
     # GeminiService.start_chat_session requires session_id
-    tGreeting = await gemini_service.start_chat_session(session_id, initial_task_title, examples_text)
+    tGreeting = await gemini_service.start_chat_session(
+        session_id, initial_task_title, examples_text
+    )
 
     # 業種選択マーカーの検出
     industry_selector_html = ""
@@ -642,15 +659,17 @@ async def approve_draft(
                 break
 
     # ドラフト内容を取得
-    # 優先: フォームから渡された表示済み内容（和暦変換済み）をそのまま使用
+    # 優先: フォームから渡された表示済み内容を使用
     if draft_content and draft_content.strip():
         draft_content = draft_content.strip()
     else:
-        # フォールバック: チャット履歴からドラフト内容を抽出して変換
+        # フォールバック: チャット履歴からドラフト内容を抽出
         print("[WARNING] No draft_content from form, extracting from chat history")
         draft_content = None
         if last_ai_response:
-            draft_content = extract_single_section_from_response(last_ai_response, task_id)
+            draft_content = extract_single_section_from_response(
+                last_ai_response, task_id
+            )
         if not draft_content and last_ai_response:
             draft_content = (
                 last_ai_response.replace("[[CONTENT_START]]", "")
@@ -658,22 +677,30 @@ async def approve_draft(
                 .replace("[[DRAFT_PROPOSED]]", "")
                 .strip()
             )
-        # フォールバック時のみ和暦変換を適用
-        if draft_content and task_id == "background":
-            draft_content = convert_western_to_wareki(draft_content)
+
+    # backgroundセクションの場合は必ず和暦変換を適用（サーバーサイドで確実に処理）
+    if draft_content and task_id == "background":
+        draft_content = convert_western_to_wareki(draft_content)
 
     # --- 記入例との比較検証 ---
     # 前回の検証でフィードバックを表示済みかどうかをCookieで判定
     verification_flagged = request.cookies.get(f"vf_{task_id}")
-    industry_type_for_verify = session_data.get("industry_type") if session_data else None
+    industry_type_for_verify = (
+        session_data.get("industry_type") if session_data else None
+    )
     if not skip_verification and draft_content and industry_type_for_verify:
-        current_example = await get_section_example(db, industry_type_for_verify, task_id)
+        current_example = await get_section_example(
+            db, industry_type_for_verify, task_id
+        )
         if current_example:
             import html as _html
+
             escaped_draft = _html.escape(draft_content, quote=True)
             section_label = SECTION_DISPLAY_NAMES.get(task_id, task_id)
             section_verification = await gemini_service.verify_section_draft(
-                section_label, draft_content, current_example,
+                section_label,
+                draft_content,
+                current_example,
                 self_check_items=SELF_CHECK_ITEMS.get(task_id),
             )
             if section_verification.get("has_issues"):
@@ -681,8 +708,12 @@ async def approve_draft(
                 # Cookie フラグを立てて「ブラッシュアップ中」と記憶する
                 feedback_text = section_verification.get("feedback", "")
                 # AIがMarkdownを返した場合に備えてHTMLタグに変換
-                feedback_text = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", feedback_text)
-                early_user_msg_html = templates.get_template("components/message.html").render(
+                feedback_text = re.sub(
+                    r"\*\*(.+?)\*\*", r"<strong>\1</strong>", feedback_text
+                )
+                early_user_msg_html = templates.get_template(
+                    "components/message.html"
+                ).render(
                     {"request": request, "message": "この内容でOKです", "is_user": True}
                 )
                 feedback_msg = (
@@ -691,7 +722,9 @@ async def approve_draft(
                     f"改善したい場合はチャットでご相談ください。"
                     f"このまま進める場合は下のボタンを押してください。"
                 )
-                ai_feedback_html = templates.get_template("components/message.html").render(
+                ai_feedback_html = templates.get_template(
+                    "components/message.html"
+                ).render(
                     {"request": request, "message": feedback_msg, "is_user": False}
                 )
                 force_ok_button = f"""<div class="flex justify-start ml-12 mb-4">
@@ -708,15 +741,21 @@ async def approve_draft(
     </button>
   </form>
 </div>"""
-                resp = HTMLResponse(content=early_user_msg_html + ai_feedback_html + force_ok_button)
+                resp = HTMLResponse(
+                    content=early_user_msg_html + ai_feedback_html + force_ok_button
+                )
                 resp.set_cookie(key="session_id", value=session_id)
                 # ブラッシュアップ中フラグをCookieにセット（1時間有効）
-                resp.set_cookie(key=f"vf_{task_id}", value="1", max_age=3600, httponly=True)
+                resp.set_cookie(
+                    key=f"vf_{task_id}", value="1", max_age=3600, httponly=True
+                )
                 return resp
             elif verification_flagged:
                 # ブラッシュアップ後に再検証してOKだった場合でも自動進行しない
                 # → 明示的な「次のセクションへ」ボタンを表示して確認を求める
-                early_user_msg_html = templates.get_template("components/message.html").render(
+                early_user_msg_html = templates.get_template(
+                    "components/message.html"
+                ).render(
                     {"request": request, "message": "この内容でOKです", "is_user": True}
                 )
                 ok_msg = "内容が改善されました。記入例と比較して問題は見つかりませんでした。\n\nこのまま次のセクションへ進む場合は下のボタンを押してください。"
@@ -737,7 +776,9 @@ async def approve_draft(
     </button>
   </form>
 </div>"""
-                resp = HTMLResponse(content=early_user_msg_html + ai_ok_html + advance_button)
+                resp = HTMLResponse(
+                    content=early_user_msg_html + ai_ok_html + advance_button
+                )
                 resp.set_cookie(key="session_id", value=session_id)
                 # ブラッシュアップフラグを削除（次のセクションへ進む前にクリア）
                 resp.delete_cookie(key=f"vf_{task_id}")
@@ -780,23 +821,34 @@ async def approve_draft(
     )
 
     # 次のセクションの記入例をDBから取得
-    # ※AIへのメッセージには含めず、HTMLカードとして直接表示する
+    # ※AIへのメッセージにも含めて確実に参照させる
     industry_type = session_data.get("industry_type") if session_data else None
+    next_example_text = None
     # 次のセクションをAIに明示して指定（AIが独自に順番を判断してスキップするのを防ぐ）
     if next_task:
-        next_section_name = SECTION_DISPLAY_NAMES.get(next_task["id"], next_task["title"])
+        next_section_name = SECTION_DISPLAY_NAMES.get(
+            next_task["id"], next_task["title"]
+        )
         ai_ok_message = f"この内容でOKです。次のセクションは「{next_section_name}」です。このセクションについてヒアリングを開始してください。"
+
+        # 記入例を取得してAIへのメッセージに含める
+        if industry_type:
+            next_example_text = await get_section_example(
+                db, industry_type, next_task["id"]
+            )
+            if next_example_text:
+                ai_ok_message += f"\n\n【このセクションの記入例（参考）】\n{next_example_text}\n\n記入例は文体・粒度の参考にしてください。記入例をそのまま返答に含めてはいけません。"
     else:
         ai_ok_message = "この内容でOKです。すべてのセクションが完了しました。"
+
     next_example_html = ""
-    if next_task and industry_type:
-        next_example = await get_section_example(db, industry_type, next_task["id"])
-        if next_example:
-            section_name = SECTION_DISPLAY_NAMES.get(next_task["id"], next_task["title"])
-            industry_label = INDUSTRY_DISPLAY_NAMES.get(industry_type, industry_type)
-            import html as html_module
-            escaped_example = html_module.escape(next_example).replace("\n", "<br>")
-            next_example_html = f"""<div class="flex justify-start my-2">
+    if next_task and industry_type and next_example_text:
+        section_name = SECTION_DISPLAY_NAMES.get(next_task["id"], next_task["title"])
+        industry_label = INDUSTRY_DISPLAY_NAMES.get(industry_type, industry_type)
+        import html as html_module
+
+        escaped_example = html_module.escape(next_example_text).replace("\n", "<br>")
+        next_example_html = f"""<div class="flex justify-start my-2">
   <div class="bg-amber-50 border border-amber-200 px-4 py-3 rounded-lg max-w-2xl text-sm ml-12">
     <div class="font-semibold text-amber-800 mb-2">📋 {section_name} の記入例（{industry_label}の場合）</div>
     <div class="text-gray-700 text-xs leading-relaxed">{escaped_example}</div>
@@ -860,7 +912,13 @@ async def approve_draft(
 </div>
 """
 
-    response = HTMLResponse(content=user_msg_html + next_example_html + ai_msg_html + completion_banner_html + task_update_html)
+    response = HTMLResponse(
+        content=user_msg_html
+        + next_example_html
+        + ai_msg_html
+        + completion_banner_html
+        + task_update_html
+    )
     response.set_cookie(key="session_id", value=session_id)
     # ブラッシュアップフラグが残っている場合はクリア（このセクションは正常に完了）
     response.delete_cookie(key=f"vf_{task_id}")
@@ -925,7 +983,9 @@ async def select_industry(
     #   （AIはシステムプロンプトで全記入例を把握済み）
     first_example = await get_section_example(db, industry_type, "motivation")
     section_name = SECTION_DISPLAY_NAMES.get("motivation", "1. 創業の動機")
-    example_label = f"{section_name} の記入例（{industry_label}の場合）" if first_example else None
+    example_label = (
+        f"{section_name} の記入例（{industry_label}の場合）" if first_example else None
+    )
 
     ai_response_text = await gemini_service.generate_response(session_id, ai_message)
 
@@ -1037,7 +1097,12 @@ async def chat_message(
 
     # ドラフト提示マーカーの検出（フォールバック検出を含む）
     # [[DRAFT_PROPOSED]]がなくても、ドラフト的な内容を含む場合はOKボタンを表示する
-    DRAFT_PHRASES = ["でよろしいでしょうか", "いかがでしょうか", "ご確認ください", "以下の内容で"]
+    DRAFT_PHRASES = [
+        "でよろしいでしょうか",
+        "いかがでしょうか",
+        "ご確認ください",
+        "以下の内容で",
+    ]
     has_draft_proposed = "[[DRAFT_PROPOSED]]" in ai_response_text
     if not has_draft_proposed:
         if "[[CONTENT_START]]" in ai_response_text:
@@ -1063,6 +1128,7 @@ async def chat_message(
             # 表示済み（変換済み）のドラフト内容を抽出してhidden inputに埋め込む
             # → approve_draftがそのままDBに保存するため、二重変換不要
             import html as _html
+
             content_match = re.search(
                 r"\[\[CONTENT_START\]\](.*?)\[\[CONTENT_END\]\]",
                 ai_response_text,
@@ -1103,7 +1169,9 @@ async def chat_message(
     ai_response_text = ai_response_text.replace("[[CONTENT_END]]", "")
 
     # [[COMPLETED:xxx]] マーカーをAIが誤出力した場合のクリーンアップ（保存処理は行わない）
-    ai_response_text = re.sub(r"\n*\[\[COMPLETED:[a-z_]+\]\]\n*", "\n\n", ai_response_text)
+    ai_response_text = re.sub(
+        r"\n*\[\[COMPLETED:[a-z_]+\]\]\n*", "\n\n", ai_response_text
+    )
 
     # 過剰な改行を整理
     ai_response_text = re.sub(r"\n{3,}", "\n\n", ai_response_text)
@@ -1505,6 +1573,13 @@ async def download_plan_excel(
     workbook = openpyxl.load_workbook(template_path)
     sheet = workbook.active
 
+    # 作成日を令和形式で書き込み（AC1=年, AF1=月, AI1=日）
+    _today = date.today()
+    _reiwa_year = _today.year - 2018  # 令和元年 = 2019年
+    sheet["AC1"].value = _reiwa_year
+    sheet["AF1"].value = _today.month
+    sheet["AI1"].value = _today.day
+
     # テンプレート内の見出しセルを探して、転記先セルを動的に推定する
     label_to_key = {
         "創業の動機": "motivation",
@@ -1572,6 +1647,10 @@ async def download_plan_excel(
 
     # 特定のセルを手動で上書き（動的検出が正しくない場合）
     mapping["background"] = "H13"  # 経営者の略歴等
+    mapping["employees"] = "W43"  # 従業員数 入力セル（フォールバック用）
+    mapping["partners"] = "C49"  # 取引先名 第1入力行（フォールバック用）
+    mapping["funds"] = "AP20"  # 設備資金内訳 第1テキストセル（フォールバック用）
+    # mapping["outlook"] は数値抽出処理のみ行うため、フォールバック用のマッピングは削除
 
     # データベースから取得したセクションデータをExcelに転記
     for key, content in sections.items():
@@ -1606,17 +1685,17 @@ async def download_plan_excel(
                 # 略歴行と特殊フィールドに振り分け
                 history_lines = []
                 qualification_text = ""  # 取得資格
-                permit_text = ""         # 許認可
-                ip_text = ""             # 知的財産権等
+                permit_text = ""  # 許認可
+                ip_text = ""  # 知的財産権等
 
                 for line in lines:
                     line_s = line.strip()
                     if line_s.startswith("取得資格："):
-                        qualification_text = line_s[len("取得資格："):]
+                        qualification_text = line_s[len("取得資格：") :]
                     elif line_s.startswith("許認可："):
-                        permit_text = line_s[len("許認可："):]
+                        permit_text = line_s[len("許認可：") :]
                     elif line_s.startswith("知的財産権等："):
-                        ip_text = line_s[len("知的財産権等："):]
+                        ip_text = line_s[len("知的財産権等：") :]
                     elif line_s.startswith("過去の事業経験："):
                         pass  # チェックボックス形式のため書き込み対象外
                     elif line_s:
@@ -1634,7 +1713,10 @@ async def download_plan_excel(
 
                     if year_month_match:
                         year_month = year_month_match.group(1)
-                        content_text = line[len(year_month):].strip()
+                        # 年月の直後の「：」「:」区切り文字を除去する
+                        content_text = (
+                            line[len(year_month) :].strip().lstrip("：:").strip()
+                        )
                     else:
                         year_month = ""
                         content_text = line
@@ -1657,15 +1739,15 @@ async def download_plan_excel(
             if key == "service":
                 # セクション境界キーワード: (section_name, pattern)
                 _SERVICE_SECTIONS = [
-                    ("products",    r"取扱商品.*サービス.*内容"),
+                    ("products", r"取扱商品.*サービス.*内容"),
                     ("sales_point", r"セールスポイント|自社の強み"),
-                    ("target",      r"販売ターゲット|販売戦略|集客方法"),
-                    ("market",      r"競合.{0,5}市場|自社を取り巻く"),
+                    ("target", r"販売ターゲット|販売戦略|集客方法"),
+                    ("market", r"競合.{0,5}市場|自社を取り巻く"),
                 ]
 
                 current_section = "description"
                 description_lines = []
-                products = []        # (説明文, 売上シェア%)
+                products = []  # (説明文, 売上シェア%)
                 sales_point_lines = []
                 target_lines = []
                 market_lines = []
@@ -1684,7 +1766,7 @@ async def download_plan_excel(
                         if m:
                             matched_section = section_name
                             # "：" or ":" 以降の文字列を取り出す
-                            colon_m = re.search(r"[：:]\s*(.+)$", line[m.end():])
+                            colon_m = re.search(r"[：:]\s*(.+)$", line[m.end() :])
                             if colon_m:
                                 after_header = colon_m.group(1).strip()
                             break
@@ -1705,10 +1787,12 @@ async def download_plan_excel(
                         m = re.match(r"^[①②③１２３123]\s*(.*)", line)
                         if m:
                             item_text = m.group(1).strip()
-                            share_m = re.search(r"[（(]売上シェア\s*(\d+)\s*[%％][）)]", item_text)
+                            share_m = re.search(
+                                r"[（(]売上シェア\s*(\d+)\s*[%％][）)]", item_text
+                            )
                             if share_m:
                                 share_pct = share_m.group(1)
-                                item_text = item_text[:share_m.start()].strip()
+                                item_text = item_text[: share_m.start()].strip()
                             else:
                                 share_pct = ""
                             products.append((item_text, share_pct))
@@ -1751,22 +1835,566 @@ async def download_plan_excel(
                 wrapped_sales = _wrap50(sales_point_lines)
                 for idx in range(3):
                     if idx < len(wrapped_sales):
-                        val = "\n".join(wrapped_sales[idx:]) if idx == 2 else wrapped_sales[idx]
+                        val = (
+                            "\n".join(wrapped_sales[idx:])
+                            if idx == 2
+                            else wrapped_sales[idx]
+                        )
                         sheet[f"H{33 + idx}"].value = val
 
                 # 販売ターゲット・販売戦略 → H36, H37, H38（50文字折り返し）
                 wrapped_target = _wrap50(target_lines)
                 for idx in range(3):
                     if idx < len(wrapped_target):
-                        val = "\n".join(wrapped_target[idx:]) if idx == 2 else wrapped_target[idx]
+                        val = (
+                            "\n".join(wrapped_target[idx:])
+                            if idx == 2
+                            else wrapped_target[idx]
+                        )
                         sheet[f"H{36 + idx}"].value = val
 
                 # 競合・市場 → H39, H40, H41（50文字折り返し）
                 wrapped_market = _wrap50(market_lines)
                 for idx in range(3):
                     if idx < len(wrapped_market):
-                        val = "\n".join(wrapped_market[idx:]) if idx == 2 else wrapped_market[idx]
+                        val = (
+                            "\n".join(wrapped_market[idx:])
+                            if idx == 2
+                            else wrapped_market[idx]
+                        )
                         sheet[f"H{39 + idx}"].value = val
+
+                continue
+
+            # 「4. 従業員」は数値パースで各セルに書き込み
+            if key == "employees":
+                # 1行ずつ処理することでパターンの競合（家族従業員がW43に入るなど）を防ぐ
+                # 「常勤役員の人数（法人のみ）：1名」のように修飾語が入っても対応できる
+                _emp_line_patterns = [
+                    (r"常勤役員[^：:\n]*[：:]\s*(\d+)名?", "I43"),
+                    (r"(?<!家族)(?:従業員[数]?|社員)[^：:\n]*[：:]\s*(\d+)名?", "W43"),
+                    (r"(?:家族従業員|(?:うち)?家族)[^：:\n]*[：:]\s*(\d+)名?", "AH43"),
+                    (r"パート[^：:\n]*[：:]\s*(\d+)名?", "AH44"),
+                ]
+                for _emp_line in content.split("\n"):
+                    _emp_line = _emp_line.strip()
+                    if not _emp_line:
+                        continue
+                    for _pat, _cell in _emp_line_patterns:
+                        _m = re.search(_pat, _emp_line)
+                        if _m:
+                            _num = int(_m.group(1))
+                            # 0人の場合は空欄のままにする（テンプレートの「人」ラベルと重複しない）
+                            if _num > 0:
+                                try:
+                                    sheet[_cell].value = _num
+                                except Exception:
+                                    pass
+                continue
+
+            # 「5. 取引先・取引関係等」は販売先/仕入先/外注先ごとに正しいセルへ書き込み
+            if key == "partners":
+                # セクション別セルマッピング（フリガナ行, 取引先名行, 所在地, シェア, 掛取引割合, 締日, 支払日）
+                # 注: すべてマージセルの左上セルを指定
+                # X列=掛取引の割合, AD列=締日（「末」「15」等）, AI列=支払日（「翌月10」等）
+                _PARTNER_CELLS = {
+                    "販売先": [
+                        {
+                            "kana": "C49",
+                            "name": "C50",
+                            "location": "O49",
+                            "share": "U49",
+                            "credit_rate": "X49",
+                            "closing": "AD49",
+                            "payment": "AI49",
+                        },
+                        {
+                            "kana": "C51",
+                            "name": "C52",
+                            "location": "O51",
+                            "share": "U51",
+                            "credit_rate": "X51",
+                            "closing": "AD51",
+                            "payment": "AI51",
+                        },
+                    ],
+                    "仕入先": [
+                        {
+                            "kana": "C55",
+                            "name": "C56",
+                            "location": "O55",
+                            "share": "U55",
+                            "credit_rate": "X55",
+                            "closing": "AD55",
+                            "payment": "AI55",
+                        },
+                        {
+                            "kana": "C57",
+                            "name": "C58",
+                            "location": "O57",
+                            "share": "U57",
+                            "credit_rate": "X57",
+                            "closing": "AD57",
+                            "payment": "AI57",
+                        },
+                    ],
+                    "外注先": [
+                        {
+                            "kana": "C61",
+                            "name": "C62",
+                            "location": "O61",
+                            "share": "U61",
+                            "credit_rate": "X61",
+                            "closing": "AD61",
+                            "payment": "AI61",
+                        },
+                    ],
+                }
+                _P_NASHI = {
+                    "なし",
+                    "特になし",
+                    "該当なし",
+                    "ありません",
+                    "ない",
+                    "なし。",
+                    "特になし。",
+                    "該当なし。",
+                }
+                _sec_counts = {k: 0 for k in _PARTNER_CELLS}
+                _current_sec = None
+
+                for _raw in content.split("\n"):
+                    _pline = _raw.strip()
+                    if not _pline:
+                        continue
+
+                    # セクション見出し検出（「販売先：」「仕入先」「外注先」）
+                    for _sec in ["販売先", "仕入先", "外注先"]:
+                        if re.match(rf"^{_sec}", _pline):
+                            _current_sec = _sec
+                            # 見出し後に同行データがある場合（「販売先：〇〇社」）
+                            _pline = re.sub(rf"^{_sec}[：:\s]*", "", _pline).strip()
+                            break
+
+                    if not _pline or _current_sec is None:
+                        continue
+
+                    # 行頭の記号（・―-）を先に除去してからなし判定
+                    _pline = re.sub(r"^[・\-\−●○]+\s*", "", _pline)
+                    if not _pline:
+                        continue
+
+                    # 「なし」系はスキップ
+                    if _pline.replace("　", "").replace(" ", "") in _P_NASHI:
+                        continue
+
+                    # シェア・支払条件のみの行は会社名として登録しない
+                    if re.match(
+                        r"^(?:シェア|取引シェア|掛取引|支払条件|末締め|月末締め|即時払い|前払い|翌月払い)",
+                        _pline,
+                    ):
+                        continue
+
+                    # 最大登録数を超えたらスキップ
+                    _pidx = _sec_counts.get(_current_sec, 0)
+                    _pcells_list = _PARTNER_CELLS.get(_current_sec, [])
+                    if _pidx >= len(_pcells_list):
+                        continue
+
+                    _pcells = _pcells_list[_pidx]
+
+                    # 所在地の抽出（括弧付き or スペース区切り、日本・海外問わず）
+                    _ploc = ""
+                    _pcomp = _pline
+
+                    # 1. 括弧付きパターン（「（東京都）」「（首都ハボロネ）」など）
+                    _loc_m = re.search(r"（([^）]+)）", _pline)
+                    if _loc_m:
+                        _ploc = _loc_m.group(1).strip()
+                        _pcomp = _pline[: _loc_m.start()].strip()
+                    else:
+                        # 2. スペース区切りパターン（「クラスメソッド 東京都港区」「個人 首都ハボロネ」等）
+                        # シェア/カンマ等のキーワード前までを対象にする
+                        _before_kw = re.split(
+                            r"(?:\s+シェア|\s+取引シェア|[、,，])", _pline
+                        )[0]
+                        _parts = _before_kw.split(None, 1)  # 最初の空白で2分割
+
+                        _pcomp = _parts[0] if _parts else _pline
+                        if len(_parts) >= 2:
+                            # 2番目の部分から所在地を取得（残りのキーワードを除外）
+                            _loc_text = _parts[1].strip()
+                            _ploc = re.split(
+                                r"\s+(?:シェア|掛取引|支払条件|即金|即時払い|前払い|翌月払い|末締め|月末締め)",
+                                _loc_text,
+                            )[0].strip()
+
+                    # シェア%パース
+                    _pshare_m = re.search(
+                        r"(?:シェア|取引シェア|取引先のシェア)[：:\s]*(\d+)\s*[%％]",
+                        _pline,
+                    )
+
+                    # 掛取引の割合パース
+                    # 様々な表記に対応: 「掛取引100%」「掛け取引の割合50％」「掛100%」
+                    _credit_rate = None
+                    _credit_m = re.search(
+                        r"(?:掛け?取引(?:の割合)?|掛け?)[：:\s]*(\d+)\s*[%％]", _pline
+                    )
+                    if _credit_m:
+                        _credit_rate = int(_credit_m.group(1))
+                    # 即金系キーワード → 掛取引0%
+                    elif re.search(
+                        r"(?:即金|現金(?:取引)?|即時払い|即日|前払い|即払い)", _pline
+                    ):
+                        _credit_rate = 0
+
+                    # 回収・支払条件のパース
+                    # AD列：締日（「末」「15」など）
+                    # AI列：支払日（「翌月10」「翌30」など）
+                    _closing_text = ""
+                    _payment_text = ""
+
+                    # 即金パターンをまず確認
+                    if re.search(r"即金|即時払い", _pline):
+                        _closing_text = "即金"
+                    else:
+                        # 締日の抽出（「末日締め」→「末」、「15日締め」→「15」）
+                        _closing_m = re.search(r"(月末|末日|末|(\d{1,2})日?)締", _pline)
+                        if _closing_m:
+                            if _closing_m.group(2):  # 数字がある場合（15日締め等）
+                                _closing_text = _closing_m.group(2)
+                            else:  # 「月末」「末日」「末」
+                                _closing_text = "末"
+
+                        # 支払日の抽出（「翌月10日払い」→「翌月10」、「翌30日回収」→「翌30」）
+                        _payment_day_m = re.search(
+                            r"(翌々?月|翌|当月)?(\d{1,2})日(?:払い|支払|回収)", _pline
+                        )
+                        if _payment_day_m:
+                            _prefix = (
+                                _payment_day_m.group(1)
+                                if _payment_day_m.group(1)
+                                else ""
+                            )
+                            _day = _payment_day_m.group(2)
+                            _payment_text = f"{_prefix}{_day}"
+                        # 月末払いパターン
+                        elif re.search(
+                            r"(翌々?月|当月)?月末(?:払い|支払|回収)", _pline
+                        ):
+                            _month_m = re.search(r"(翌々?月|当月)?月末", _pline)
+                            _prefix = _month_m.group(1) if _month_m.group(1) else ""
+                            _payment_text = f"{_prefix}月末"
+
+                    # セルへ書き込み
+                    sheet[_pcells["name"]].value = _pcomp
+                    if _ploc:
+                        sheet[_pcells["location"]].value = _ploc
+                    if _pshare_m:
+                        try:
+                            sheet[_pcells["share"]].value = int(_pshare_m.group(1))
+                        except Exception:
+                            pass
+                    if _credit_rate is not None:
+                        try:
+                            sheet[_pcells["credit_rate"]].value = _credit_rate
+                        except Exception:
+                            pass
+                    if _closing_text:
+                        try:
+                            sheet[_pcells["closing"]].value = _closing_text
+                        except Exception:
+                            pass
+                    if _payment_text:
+                        try:
+                            sheet[_pcells["payment"]].value = _payment_text
+                        except Exception:
+                            pass
+
+                    _sec_counts[_current_sec] = _pidx + 1
+
+                # 人件費の支払情報を抽出（G65とM65に書き込む）
+                for _raw in content.split("\n"):
+                    _pline = _raw.strip()
+                    if re.match(r"人件費の?支払", _pline):
+                        # 締日の抽出
+                        _personnel_closing = ""
+                        _personnel_payment = ""
+
+                        # 即金パターン
+                        if re.search(r"即金|即時払い", _pline):
+                            _personnel_closing = "即金"
+                        else:
+                            # 締日の抽出（「末日締め」→「末」、「15日締め」→「15」）
+                            _closing_m = re.search(
+                                r"(月末|末日|末|(\d{1,2})日?)締", _pline
+                            )
+                            if _closing_m:
+                                if _closing_m.group(2):  # 数字がある場合
+                                    _personnel_closing = _closing_m.group(2)
+                                else:  # 「月末」「末日」「末」
+                                    _personnel_closing = "末"
+
+                            # 支払日の抽出（「翌月10日払い」→「翌月10」）
+                            _payment_day_m = re.search(
+                                r"(翌々?月|翌|当月)?(\d{1,2})日(?:払い|支払)", _pline
+                            )
+                            if _payment_day_m:
+                                _prefix = (
+                                    _payment_day_m.group(1)
+                                    if _payment_day_m.group(1)
+                                    else ""
+                                )
+                                _day = _payment_day_m.group(2)
+                                _personnel_payment = f"{_prefix}{_day}"
+                            # 月末払いパターン
+                            elif re.search(r"(翌々?月|当月)?月末(?:払い|支払)", _pline):
+                                _month_m = re.search(r"(翌々?月|当月)?月末", _pline)
+                                _prefix = _month_m.group(1) if _month_m.group(1) else ""
+                                _personnel_payment = f"{_prefix}月末"
+
+                        # G65とM65に書き込み
+                        if _personnel_closing:
+                            try:
+                                sheet["G65"].value = _personnel_closing
+                            except Exception:
+                                pass
+                        if _personnel_payment:
+                            try:
+                                sheet["M65"].value = _personnel_payment
+                            except Exception:
+                                pass
+                        break  # 人件費の支払は1行のみなので抜ける
+
+                continue
+
+            # 「6. 関連企業」が「なし」系の回答の場合は空欄のままにする
+            if key == "related_companies":
+                # 「関連企業：」などのプレフィックスを除去してから判定
+                _rc_text = content.strip()
+                _rc_text = re.sub(r"^関連企業[：:\s]*", "", _rc_text)
+                _rc_normalized = (
+                    _rc_text.replace("　", "").replace(" ", "").replace("。", "")
+                )
+                _NASHI_SET = {"なし", "特になし", "該当なし", "ありません", "ない"}
+                if _rc_normalized in _NASHI_SET:
+                    continue  # 書き込まずにスキップ
+                # 通常通り書き込み
+                _rc_cell = mapping.get(key)
+                if _rc_cell:
+                    try:
+                        sheet[_rc_cell].value = content
+                    except Exception as e:
+                        print(f"[ERROR] ✗ Could not write {key}: {e}")
+                continue
+
+            # 「8. 必要な資金と調達方法」は設備資金・運転資金の内訳セルに書き込み
+            if key == "funds":
+                # 内訳行を抽出（「・」「-」などの行頭記号がある行、または「内訳」以降の行）
+                _in_breakdown = False
+                _breakdown_items = []
+                for _raw_line in content.split("\n"):
+                    _line = _raw_line.strip()
+                    if not _line:
+                        continue
+                    # テンプレートに既に入っている見出し行をスキップ
+                    if re.match(r"^(?:必要な資金|設備資金|運転資金)[：:]", _line):
+                        continue
+                    # 「商品仕入、経費支払資金など」などのラベルをスキップ
+                    if re.match(
+                        r"^(?:店舗、工場、機械、車両など|商品仕入、経費支払資金など)",
+                        _line,
+                    ):
+                        continue
+                    # 「内訳」「（内訳）」で内訳開始
+                    if re.match(r"^[（(]?内訳[）)]?$", _line):
+                        _in_breakdown = True
+                        continue
+                    # 内訳モード中、または行頭記号がある行、または括弧で始まる補足説明を内訳とみなす
+                    if _in_breakdown or re.match(r"^[・\-\−●○（(]\s*", _line):
+                        _breakdown_items.append(_line)
+
+                # 設備資金内訳 (AP20-AP22) と運転資金内訳 (AP32-AP34)
+                # 項目名=AP列、金額=BD列
+                _equipment_cells = [
+                    ("AP20", "BD20"),
+                    ("AP21", "BD21"),
+                    ("AP22", "BD22"),
+                ]
+                _working_cells = [("AP32", "BD32"), ("AP33", "BD33"), ("AP34", "BD34")]
+
+                # シンプルに最初の3項目を設備資金、次の3項目を運転資金とする
+                _equipment_items = _breakdown_items[:3]
+                _working_items = _breakdown_items[3:6]
+
+                # 設備資金の処理
+                for i, _item_line in enumerate(_equipment_items):
+                    if i >= len(_equipment_cells):
+                        break
+
+                    _item_line = re.sub(r"^[・\-\−●○]\s*", "", _item_line)
+                    _amount_m = re.search(
+                        r"(\d+(?:,\d{3})*)\s*(?:万\s*円|円|万)", _item_line
+                    )
+                    _item_name = _item_line
+                    _amount_num = None
+
+                    if _amount_m:
+                        _amount_str = _amount_m.group(1).replace(",", "")
+                        try:
+                            _amount_num = int(_amount_str)
+                        except ValueError:
+                            pass
+                        _item_name = _item_line[: _amount_m.start()].strip()
+
+                    _item_cell, _amount_cell = _equipment_cells[i]
+                    try:
+                        sheet[_item_cell].value = _item_name
+                    except Exception:
+                        pass
+                    if _amount_num is not None:
+                        try:
+                            sheet[_amount_cell].value = _amount_num
+                        except Exception:
+                            pass
+
+                # 運転資金の処理
+                for i, _item_line in enumerate(_working_items):
+                    if i >= len(_working_cells):
+                        break
+
+                    _item_line = re.sub(r"^[・\-\−●○]\s*", "", _item_line)
+                    _amount_m = re.search(
+                        r"(\d+(?:,\d{3})*)\s*(?:万\s*円|円|万)", _item_line
+                    )
+                    _item_name = _item_line
+                    _amount_num = None
+
+                    if _amount_m:
+                        _amount_str = _amount_m.group(1).replace(",", "")
+                        try:
+                            _amount_num = int(_amount_str)
+                        except ValueError:
+                            pass
+                        _item_name = _item_line[: _amount_m.start()].strip()
+
+                    _item_cell, _amount_cell = _working_cells[i]
+                    try:
+                        sheet[_item_cell].value = _item_name
+                    except Exception:
+                        pass
+                    if _amount_num is not None:
+                        try:
+                            sheet[_amount_cell].value = _amount_num
+                        except Exception:
+                            pass
+
+                # 自己資金・公庫借入額のパース（カンマ区切り数字に対応）
+                _sf_m = re.search(r"自己資金[：:\s]*(\d+(?:,\d{3})*)万?円?", content)
+                if _sf_m:
+                    try:
+                        _sf_amount = int(_sf_m.group(1).replace(",", ""))
+                        sheet["BV18"].value = _sf_amount
+                    except Exception:
+                        pass
+                # 「日本政策金融公庫 国民生活事業からの借入 1,000万円」のような形式に対応
+                _jfc_m = re.search(
+                    r"(?:公庫|日本政策).*?(?:借入|融資).*?(\d+(?:,\d{3})*)万?円?",
+                    content,
+                )
+                if _jfc_m:
+                    try:
+                        _jfc_amount = int(_jfc_m.group(1).replace(",", ""))
+                        sheet["BV24"].value = _jfc_amount
+                    except Exception:
+                        pass
+                continue
+
+            # 「9. 事業の見通し」は4ブロックに分けて処理
+            if key == "outlook":
+                # ブロック1: 「創業当初：」から「１年後又は軌道に乗った後：」の前まで
+                # ブロック2: 「１年後又は軌道に乗った後：」から「＜創業当初＞」の前まで
+                # ブロック3: 「＜創業当初＞」から「＜軌道に乗った後＞」の前まで
+                # ブロック4: 「＜軌道に乗った後＞」から最後まで
+
+                # ブロック1: 創業当初の数値部分を抽出
+                _block1_match = re.search(
+                    r"創業当初：(.*?)(?=１年後又は軌道に乗った後：|＜創業当初＞|$)",
+                    content,
+                    re.DOTALL
+                )
+                _block1 = _block1_match.group(1) if _block1_match else ""
+
+                # ブロック2: 軌道に乗った後の数値部分を抽出
+                _block2_match = re.search(
+                    r"１年後又は軌道に乗った後：(.*?)(?=＜創業当初＞|＜軌道に乗った後＞|$)",
+                    content,
+                    re.DOTALL
+                )
+                _block2 = _block2_match.group(1) if _block2_match else ""
+
+                # ブロック3: 創業当初の説明部分を抽出
+                _block3_match = re.search(
+                    r"＜創業当初＞(.*?)(?=＜軌道に乗った後＞|$)",
+                    content,
+                    re.DOTALL
+                )
+                _block3 = _block3_match.group(1).strip() if _block3_match else ""
+
+                # ブロック4: 軌道に乗った後の説明部分を抽出
+                _block4_match = re.search(
+                    r"＜軌道に乗った後＞(.*?)$",
+                    content,
+                    re.DOTALL
+                )
+                _block4 = _block4_match.group(1).strip() if _block4_match else ""
+
+                # ブロック1から創業当初の数値を抽出してAT列に書き込み
+                _initial_patterns = [
+                    (r"売上高[^0-9\n]*(\d+(?:,\d{3})*)", "AT41"),
+                    (r"売上原価[^0-9\n]*(\d+(?:,\d{3})*)", "AT44"),
+                    (r"人件費[^0-9\n]*(\d+(?:,\d{3})*)", "AT46"),
+                    (r"家賃[^0-9\n]*(\d+(?:,\d{3})*)", "AT48"),
+                    (r"支払利息[^0-9\n]*(\d+(?:,\d{3})*)", "AT50"),
+                    (r"その他[^0-9\n]*(\d+(?:,\d{3})*)", "AT52"),
+                ]
+                for _pattern, _cell in _initial_patterns:
+                    _m = re.search(_pattern, _block1)
+                    if _m:
+                        try:
+                            sheet[_cell].value = int(_m.group(1).replace(",", ""))
+                        except Exception:
+                            pass
+
+                # ブロック2から軌道に乗った後の数値を抽出してAZ列に書き込み
+                _later_patterns = [
+                    (r"売上高[^0-9\n]*(\d+(?:,\d{3})*)", "AZ41"),
+                    (r"売上原価[^0-9\n]*(\d+(?:,\d{3})*)", "AZ44"),
+                    (r"人件費[^0-9\n]*(\d+(?:,\d{3})*)", "AZ46"),
+                    (r"家賃[^0-9\n]*(\d+(?:,\d{3})*)", "AZ48"),
+                    (r"支払利息[^0-9\n]*(\d+(?:,\d{3})*)", "AZ50"),
+                    (r"その他[^0-9\n]*(\d+(?:,\d{3})*)", "AZ52"),
+                ]
+                for _pattern, _cell in _later_patterns:
+                    _m = re.search(_pattern, _block2)
+                    if _m:
+                        try:
+                            sheet[_cell].value = int(_m.group(1).replace(",", ""))
+                        except Exception:
+                            pass
+
+                # ブロック3とブロック4をBF41に書き込み
+                _explanation_text = ""
+                if _block3:
+                    _explanation_text += "＜創業当初＞\n" + _block3
+                if _block4:
+                    if _explanation_text:
+                        _explanation_text += "\n"
+                    _explanation_text += "＜軌道に乗った後＞\n" + _block4
+
+                if _explanation_text:
+                    sheet["BF41"].value = _explanation_text.strip()
 
                 continue
 
